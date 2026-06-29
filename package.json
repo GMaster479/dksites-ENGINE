@@ -1,0 +1,32 @@
+{
+  "name": "dksitepreview",
+  "version": "0.1.0",
+  "description": "DK Sites AI website pipeline: scrape public business data, analyze brand, generate a bespoke vanilla HTML/CSS/JS site, QA it, and serve a preview.",
+  "type": "module",
+  "bin": {
+    "dkpreview": "./run.js"
+  },
+  "scripts": {
+    "build": "node run.js",
+    "dry": "node run.js --dry-run",
+    "serve": "node src/server/preview-server.js",
+    "api": "node src/api/server.js",
+    "webhook": "node run.js --webhook"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.1",
+    "@aws-sdk/client-s3": "^3.1073.0",
+    "cheerio": "^1.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.5.2",
+    "stripe": "^22.2.2"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

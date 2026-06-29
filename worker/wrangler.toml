@@ -1,0 +1,20 @@
+# Cloudflare Worker that serves every client site from one R2 bucket.
+# Deploy:  cd worker && npx wrangler deploy
+name = "dksites-router"
+main = "index.js"
+compatibility_date = "2024-11-01"
+account_id = "0962e78c0be3ec83f4243dd144c58e5f"
+
+# R2 bucket binding — the Worker reads site files from here at runtime (no keys needed).
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "dksites-previews"
+
+# Preview wildcard: every <slug>.dksites.com hits this Worker.
+# Requires a PROXIED wildcard DNS record `*` in the dksites.com zone (see README).
+[[routes]]
+pattern = "*.dksites.com/*"
+zone_id = "66df50467c15d19fa40a477cc9a65b57"
+
+# Live client domains are attached later via Cloudflare for SaaS custom hostnames,
+# which route to this same Worker. Their slug is resolved from the routes/ map in R2.

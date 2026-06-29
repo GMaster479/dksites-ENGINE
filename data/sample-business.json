@@ -1,0 +1,73 @@
+{
+  "query": "Cole's Road Brewing, Wallingford CT",
+  "fetchedAt": "2026-06-13T00:00:00.000Z",
+  "identity": {
+    "placeId": "SAMPLE_PLACE_ID",
+    "name": "Cole's Road Brewing",
+    "address": "120 Toelles Rd, Wallingford, CT 06492",
+    "location": { "latitude": 41.4389, "longitude": -72.8073 },
+    "phone": "+1 203-555-0142",
+    "website": "https://colesroadbrewing.example"
+  },
+  "operational": {
+    "hours": {
+      "weekdayDescriptions": [
+        "Monday: Closed",
+        "Tuesday: 4:00 – 9:00 PM",
+        "Wednesday: 4:00 – 9:00 PM",
+        "Thursday: 4:00 – 10:00 PM",
+        "Friday: 3:00 – 11:00 PM",
+        "Saturday: 12:00 – 11:00 PM",
+        "Sunday: 12:00 – 8:00 PM"
+      ]
+    },
+    "priceLevel": "PRICE_LEVEL_MODERATE"
+  },
+  "atmosphere": {
+    "editorialSummary": "Easygoing taproom pouring house-brewed craft beer with rotating food trucks, trivia, and community game nights.",
+    "primaryType": "brewery",
+    "primaryTypeDisplayName": "Brewery",
+    "types": ["brewery", "bar", "restaurant", "point_of_interest"],
+    "attributes": {
+      "outdoorSeating": true,
+      "liveMusic": false,
+      "allowsDogs": true,
+      "servesBeer": true,
+      "goodForGroups": true,
+      "dineIn": true,
+      "takeout": true
+    }
+  },
+  "socialProof": {
+    "rating": 4.8,
+    "userRatingCount": 327,
+    "reviews": [
+      { "author": "Maria G.", "text": "Best taproom in the area — the food truck rotation keeps it fresh and the staff treats you like a regular on day one.", "rating": 5, "date": "2026-05-02T00:00:00Z", "attribution": { "displayName": "Maria G." } },
+      { "author": "Devin P.", "text": "Dungeons & Drafts night is a blast. Great rotating taps, always something new on.", "rating": 5, "date": "2026-04-19T00:00:00Z", "attribution": { "displayName": "Devin P." } },
+      { "author": "Sam T.", "text": "Relaxed, dog-friendly, and the beer is genuinely excellent. Trivia Tuesdays are packed.", "rating": 5, "date": "2026-03-30T00:00:00Z", "attribution": { "displayName": "Sam T." } }
+    ]
+  },
+  "assets": {
+    "photos": [
+      { "source": "google", "url": "https://example.com/hero.jpg", "widthPx": 4032, "heightPx": 3024, "attributions": [] },
+      { "source": "google", "url": "https://example.com/taproom.jpg", "widthPx": 2400, "heightPx": 1600, "attributions": [] },
+      { "source": "google", "url": "https://example.com/foodtruck.jpg", "widthPx": 1800, "heightPx": 1200, "attributions": [] },
+      { "source": "yelp", "url": "https://example.com/tanks.jpg", "category": "gallery", "attributions": [{ "displayName": "Yelp" }] }
+    ],
+    "logo": "https://example.com/logo.png",
+    "favicon": null,
+    "legacyColors": [
+      { "hex": "#1f2a24", "count": 18 },
+      { "hex": "#c9a24b", "count": 11 },
+      { "hex": "#7a3b2e", "count": 6 }
+    ]
+  },
+  "launch": {
+    "registrar": "GoDaddy.com, LLC",
+    "walkthroughKey": "godaddy",
+    "transferLocked": true,
+    "nameservers": ["ns1.domaincontrol.com", "ns2.domaincontrol.com"]
+  },
+  "attributions": [{ "displayName": "Maria G." }, { "displayName": "Yelp" }],
+  "_sources": { "google": true, "yelp": true, "legacy": true, "registrar": true }
+}

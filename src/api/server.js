@@ -1,0 +1,166 @@
+// DK Sites engine HTTP API — the bridge between app.dksites.com (React front end) and
+// the pipeline. Also hosts the Stripe webhook (same always-on process, same static IP
+// that Namecheap whitelists). Host-agnostic Express; runs anywhere Node runs.
+//
+//   PUBLIC (browser, CORS-locked to the app origin, rate-limited):
+//     POST /api/lookup            { name, city }            -> business candidate
+//     POST /api/generate          { mode, business|description } -> { jobId }
+//     GET  /api/status/:jobId                                -> { status, stage, result }
+//     GET  /api/edit-options/:previewId                      -> zones A+B options
+//     POST /api/apply-edit        { previewId, instruction } -> { version }
+//     GET  /api/check?domain=     domain availability + quote
+//     POST /api/checkout          { domain, slug, previewId } -> { url }
+//   STRIPE (raw body, signature-verified):
+//     POST /api/webhook
+//
+import express from 'express';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { config } from '../config.js';
+import { runPipeline } from '../pipeline.js';
+import { loadBuild, buildEditOptions, applyEdit } from '../edit/edit.js';
+import { checkAvailability, getRegisterPrice, tldOf } from '../launch/namecheap.js';
+import { buildQuote } from '../launch/pricing.js';
+import { createCheckout, constructEvent } from '../launch/stripe.js';
+import { runLaunch } from '../launch/launch.js';
+import { createJob, updateJob, getJob } from './jobs.js';
+
+const app = express();
+const ORIGIN = config.appOrigin || 'https://app.dksites.com';
+
+// ---- Stripe webhook FIRST: needs the raw body, so it must precede express.json() ----
+app.post('/api/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  let event;
+  try {
+    event = constructEvent(req.body, req.headers['stripe-signature']);
+  } catch (e) {
+    console.error('✗ Webhook signature failed:', e.message);
+    return res.status(400).send(`Webhook Error: ${e.message}`);
+  }
+  res.json({ received: true });
+  if (event.type === 'checkout.session.completed') {
+    const m = event.data.object.metadata || {};
+    console.log(`\n💸 Payment complete: ${m.domain} — $${(event.data.object.amount_total / 100).toFixed(2)}`);
+    runLaunch({ domain: m.domain, slug: m.slug, previewId: m.previewId, price: m.domainPrice, years: parseInt(m.years || '1', 10) })
+      .catch((e) => console.error('✗ Launch error:', e.message));
+  }
+});
+
+// ---- Everything else: JSON + CORS locked to the app, plus a health check ----
+app.use(cors({ origin: ORIGIN }));
+app.use(express.json({ limit: '1mb' }));
+app.get('/health', (_req, res) => res.json({ ok: true }));
+
+// Rate limit the money-costing path (generation). Anonymous is fine; this just stops abuse.
+const genLimiter = rateLimit({ windowMs: 60 * 60 * 1000, max: 8, standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Too many sites generated from this address. Try again later.' } });
+
+// ---- Lookup (Google Places via the engine extractor is heavy; here we expose a light
+//      candidate resolve. For now reuse extract through the pipeline's first stage. ----
+app.post('/api/lookup', async (req, res) => {
+  try {
+    const { name, city } = req.body || {};
+    if (!name) return res.status(400).json({ error: 'name required' });
+    const { extractBusinessFacts } = await import('../extract/index.js');
+    const facts = await extractBusinessFacts(`${name}${city ? `, ${city}` : ''}`);
+    res.json({
+      name: facts.name, address: facts.address || null,
+      rating: facts.rating || null, userRatingCount: facts.userRatingCount || null,
+      photo: facts.assets?.photos?.[0]?.url || null,
+      facts, // front end keeps this to pass into generate
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- Generate: kick off a background job, return jobId for polling ----
+app.post('/api/generate', genLimiter, async (req, res) => {
+  const { mode, business, description, facts } = req.body || {};
+  const jobId = createJob();
+  res.json({ jobId });
+
+  // Run in the background; the front end polls /status.
+  (async () => {
+    try {
+      updateJob(jobId, { status: 'running', stage: 'Reading your business…', progress: 0.1 });
+      // Greenfield builds from a description; existing builds from resolved facts.
+      const query = business?.name || description || '(from input)';
+      const opts = {};
+      if (facts) {
+        // Reuse already-extracted facts by writing a temp fixture path is overkill;
+        // pipeline accepts a query, so for existing we pass the name and let extract run,
+        // OR (future) refactor pipeline to accept facts directly. For now, query-based.
+      }
+      updateJob(jobId, { stage: 'Designing your site…', progress: 0.4 });
+      const result = await runPipeline(query, opts);
+      updateJob(jobId, {
+        status: 'done', stage: 'Live preview ready', progress: 1,
+        result: {
+          previewId: result.preview.id,
+          previewUrl: result.preview.url,
+          version: result.preview.version,
+          decisions: result.decisions,
+        },
+      });
+    } catch (e) {
+      updateJob(jobId, { status: 'error', error: e.message });
+    }
+  })();
+});
+
+app.get('/api/status/:jobId', (req, res) => {
+  const job = getJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'unknown job' });
+  res.json({ status: job.status, stage: job.stage, progress: job.progress, result: job.result, error: job.error });
+});
+
+// ---- Editor options (zones A + B) ----
+app.get('/api/edit-options/:previewId', async (req, res) => {
+  try {
+    const build = await loadBuild(req.params.previewId);
+    const options = await buildEditOptions(build);
+    options.previewId = req.params.previewId;
+    res.json(options);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- Apply an edit (prompt / palette / font / menu) — regenerates in place ----
+app.post('/api/apply-edit', async (req, res) => {
+  try {
+    const { previewId, instruction } = req.body || {};
+    if (!previewId) return res.status(400).json({ error: 'previewId required' });
+    const { preview, editInstruction } = await applyEdit(previewId, { instruction: instruction || null });
+    res.json({ version: preview.version, url: preview.url, applied: editInstruction });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- Domain availability + verified quote ----
+app.get('/api/check', async (req, res) => {
+  try {
+    const domain = String(req.query.domain || '').toLowerCase();
+    if (!domain) return res.status(400).json({ error: 'domain required' });
+    const avail = await checkAvailability(domain);
+    if (!avail.available) return res.json({ domain, available: false });
+    const info = avail.premium ? { price: avail.premiumPrice, years: 1, estimated: false } : await getRegisterPrice(tldOf(domain));
+    const quote = buildQuote(info.price, { domain, years: info.years, verified: !info.estimated });
+    res.json({ domain, available: true, estimated: info.estimated, years: info.years, lineItems: quote.lineItems, total: quote.total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ---- Create Stripe Checkout (margin guard: refuse estimated prices) ----
+app.post('/api/checkout', async (req, res) => {
+  try {
+    const { domain, slug, previewId } = req.body || {};
+    const d = String(domain || '').toLowerCase();
+    const avail = await checkAvailability(d);
+    if (!avail.available) return res.status(400).json({ error: 'domain not available' });
+    const info = avail.premium ? { price: avail.premiumPrice, years: 1, estimated: false } : await getRegisterPrice(tldOf(d));
+    if (info.estimated) return res.status(409).json({ error: 'price not verified; refusing checkout' });
+    const quote = buildQuote(info.price, { domain: d, years: info.years, verified: true });
+    const session = await createCheckout({ quote, slug, previewId });
+    res.json({ url: session.url, total: quote.total });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.listen(config.port, () => {
+  console.log(`DK Sites API on :${config.port}  origin=${ORIGIN}  LAUNCH_LIVE=${config.launchLive}`);
+});

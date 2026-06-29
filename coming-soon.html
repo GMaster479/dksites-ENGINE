@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DK Sites Builder — Coming Soon</title>
+  <meta name="description" content="DK Sites Builder is an AI that builds a real website for your business and puts it live. A DK Sites LLC project — launching soon.">
+  <meta name="robots" content="noindex, nofollow">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="DK Sites Builder — Coming Soon">
+  <meta property="og:description" content="An AI that builds a real website for your business — then puts it live. A DK Sites LLC project.">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    :root{
+      --charcoal:#17171A;
+      --charcoal-raise:#202024;
+      --gold:#D4AF37;
+      --gold-bright:#F2DE9B;
+      --brown:#9C7A3C;
+      --line:rgba(212,175,55,.13);
+      --text:#ECEBE6;
+      --text-dim:#928E83;
+    }
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{margin:0;height:100%}
+    body{
+      background:var(--charcoal);
+      color:var(--text);
+      font-family:Inter,system-ui,-apple-system,sans-serif;
+      line-height:1.55;
+      -webkit-font-smoothing:antialiased;
+      display:flex;
+      flex-direction:column;
+      min-height:100dvh;
+      position:relative;
+      overflow-x:hidden;
+    }
+    /* Blueprint grid + vignette — quiet, ambient */
+    body::before{
+      content:"";
+      position:fixed;inset:0;
+      background-image:
+        linear-gradient(var(--line) 1px,transparent 1px),
+        linear-gradient(90deg,var(--line) 1px,transparent 1px);
+      background-size:46px 46px;
+      mask-image:radial-gradient(ellipse 80% 75% at 50% 38%,#000 35%,transparent 100%);
+      -webkit-mask-image:radial-gradient(ellipse 80% 75% at 50% 38%,#000 35%,transparent 100%);
+      z-index:0;
+      pointer-events:none;
+    }
+
+    main{
+      position:relative;z-index:1;
+      flex:1;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+      text-align:center;
+      padding:48px 24px 32px;
+      gap:30px;
+    }
+
+    .eyebrow{
+      font-family:Orbitron,sans-serif;
+      font-weight:500;
+      font-size:.7rem;
+      letter-spacing:.34em;
+      text-transform:uppercase;
+      color:var(--brown);
+      margin:0;
+    }
+
+    .wordmark{
+      font-family:Orbitron,sans-serif;
+      font-weight:800;
+      font-size:clamp(2rem,8vw,3.4rem);
+      letter-spacing:.02em;
+      line-height:1.02;
+      margin:0;
+      background:linear-gradient(96deg,var(--gold) 8%,var(--gold-bright) 50%,var(--brown) 100%);
+      -webkit-background-clip:text;background-clip:text;
+      color:transparent;
+    }
+    .wordmark span{display:block}
+
+    .sub{
+      max-width:30ch;
+      margin:0;
+      color:var(--text);
+      font-size:clamp(1rem,2.6vw,1.16rem);
+    }
+    .sub strong{color:var(--gold-bright);font-weight:600}
+
+    /* ── Signature: a site assembling itself in gold wireframe ── */
+    .preview{
+      width:min(420px,86vw);
+      aspect-ratio:4/3;
+      background:var(--charcoal-raise);
+      border:1px solid rgba(212,175,55,.22);
+      border-radius:12px;
+      box-shadow:0 24px 60px -28px rgba(0,0,0,.9), inset 0 1px 0 rgba(255,255,255,.03);
+      overflow:hidden;
+      position:relative;
+    }
+    .preview__bar{
+      height:30px;
+      display:flex;align-items:center;gap:6px;
+      padding:0 12px;
+      border-bottom:1px solid rgba(212,175,55,.14);
+    }
+    .preview__dot{width:8px;height:8px;border-radius:50%;background:var(--brown);opacity:.7}
+    .preview__dot:nth-child(1){background:var(--gold)}
+    .preview__canvas{position:absolute;inset:30px 0 0;padding:16px;display:flex;flex-direction:column;gap:11px}
+    .wire{
+      border-radius:5px;
+      background:linear-gradient(90deg,rgba(212,175,55,.10),rgba(212,175,55,.20));
+      border:1px solid rgba(212,175,55,.20);
+      opacity:0;
+      transform:translateY(8px);
+      animation:assemble .5s ease forwards;
+    }
+    .wire--nav{height:14px;width:42%}
+    .wire--hero{height:34%;width:100%;background:linear-gradient(120deg,rgba(212,175,55,.16),rgba(156,122,60,.10))}
+    .row{display:flex;gap:11px;flex:1}
+    .wire--card{flex:1}
+    .wire--line{height:9px}
+    .wire--line.short{width:60%}
+    .wire--nav{animation-delay:.2s}
+    .wire--hero{animation-delay:.5s}
+    .wire--card:nth-of-type(1){animation-delay:.9s}
+    .wire--card:nth-of-type(2){animation-delay:1.05s}
+    .wire--card:nth-of-type(3){animation-delay:1.2s}
+    .wire--line{animation-delay:1.5s}
+    .wire--line.short{animation-delay:1.65s}
+    @keyframes assemble{to{opacity:1;transform:translateY(0)}}
+    /* gold scan line sweeping as it "generates" */
+    .preview__scan{
+      position:absolute;left:0;right:0;top:30px;height:40px;
+      background:linear-gradient(180deg,transparent,rgba(242,222,155,.18),transparent);
+      animation:scan 3.6s ease-in-out 1.9s infinite;
+      pointer-events:none;
+    }
+    @keyframes scan{
+      0%{transform:translateY(-40px);opacity:0}
+      12%{opacity:1}
+      88%{opacity:1}
+      100%{transform:translateY(360px);opacity:0}
+    }
+
+    .cta{
+      display:inline-flex;align-items:center;gap:10px;
+      font-family:Inter,sans-serif;font-weight:600;font-size:1.02rem;
+      color:#1c1606;
+      background:linear-gradient(180deg,var(--gold-bright),var(--gold));
+      padding:15px 30px;
+      border-radius:9px;
+      text-decoration:none;
+      box-shadow:0 12px 30px -10px rgba(212,175,55,.55);
+      transition:transform .18s ease, box-shadow .18s ease, filter .18s ease;
+    }
+    .cta:hover{transform:translateY(-2px);box-shadow:0 18px 38px -10px rgba(212,175,55,.7);filter:brightness(1.04)}
+    .cta:focus-visible{outline:3px solid var(--gold-bright);outline-offset:3px}
+    .cta svg{width:17px;height:17px}
+    .cta-note{margin:-14px 0 0;font-size:.85rem;color:var(--text-dim)}
+
+    footer{
+      position:relative;z-index:1;
+      text-align:center;
+      padding:22px 24px 30px;
+      border-top:1px solid rgba(212,175,55,.10);
+    }
+    .tagline{
+      font-family:Orbitron,sans-serif;font-weight:500;
+      font-size:.74rem;letter-spacing:.22em;text-transform:uppercase;
+      color:var(--gold);margin:0 0 6px;
+    }
+    .legal{margin:0;font-size:.8rem;color:var(--text-dim)}
+
+    @media (prefers-reduced-motion:reduce){
+      .wire{animation:none;opacity:1;transform:none}
+      .preview__scan{display:none}
+      .cta{transition:none}
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">A DK Sites LLC Project</p>
+
+    <h1 class="wordmark"><span>DK Sites</span><span>Builder</span></h1>
+
+    <p class="sub">An AI that builds a <strong>real website</strong> for your business — then puts it live. Launching soon.</p>
+
+    <div class="preview" role="img" aria-label="Animation of a website assembling itself in wireframe">
+      <div class="preview__bar">
+        <span class="preview__dot"></span><span class="preview__dot"></span><span class="preview__dot"></span>
+      </div>
+      <div class="preview__canvas">
+        <div class="wire wire--nav"></div>
+        <div class="wire wire--hero"></div>
+        <div class="row">
+          <div class="wire wire--card"></div>
+          <div class="wire wire--card"></div>
+          <div class="wire wire--card"></div>
+        </div>
+        <div class="wire wire--line"></div>
+        <div class="wire wire--line short"></div>
+      </div>
+      <div class="preview__scan" aria-hidden="true"></div>
+    </div>
+
+    <a class="cta" href="https://dksitesllc.com">
+      Visit DK Sites
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+    </a>
+    <p class="cta-note">See the websites we build today at dksitesllc.com</p>
+  </main>
+
+  <footer>
+    <p class="tagline">AI Powered · Human Centered</p>
+    <p class="legal">© 2026 DK Sites LLC. All rights reserved.</p>
+  </footer>
+</body>
+</html>
