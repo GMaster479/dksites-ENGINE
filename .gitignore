@@ -6,3 +6,6 @@ previews/*/
 .DS_Store
 
 registrant.json
+.wrangler/
+*.tar.gz
+menu.pdf
