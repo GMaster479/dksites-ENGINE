@@ -26,6 +26,8 @@ import { runLaunch } from '../launch/launch.js';
 import { createJob, updateJob, getJob } from './jobs.js';
 
 const app = express();
+app.set('trust proxy', 1);
+app.set('trust proxy', 1);
 const ORIGIN = config.appOrigin || 'https://app.dksites.com';
 
 // ---- Stripe webhook FIRST: needs the raw body, so it must precede express.json() ----
@@ -64,10 +66,13 @@ app.post('/api/lookup', async (req, res) => {
     const { extractBusinessFacts } = await import('../extract/index.js');
     const facts = await extractBusinessFacts(`${name}${city ? `, ${city}` : ''}`);
     res.json({
-      name: facts.name, address: facts.address || null,
-      rating: facts.rating || null, userRatingCount: facts.userRatingCount || null,
+      name: facts.identity?.name || null,
+      address: facts.identity?.address || null,
+      rating: facts.socialProof?.rating || null,
+      userRatingCount: facts.socialProof?.userRatingCount || null,
+      primaryType: facts.atmosphere?.primaryTypeDisplayName || null,
       photo: facts.assets?.photos?.[0]?.url || null,
-      facts, // front end keeps this to pass into generate
+      facts,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

@@ -44,8 +44,11 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     const host = url.hostname.toLowerCase();
+    // app.dksites.com is the Pages-hosted builder app, not a client site — proxy to Pages.
+    if (host === 'app.dksites.com') {
+      return fetch(`https://dksites.pages.dev${url.pathname}${url.search}`, request);
+    }
     const { slug, isApex, isPreview } = await resolveSlug(host, env);
-
     // Apex/root of the preview domain: reserved for the builder app/marketing site later.
     if (isApex) {
       return new Response('DK Sites Builder — coming soon.', {
