@@ -23,9 +23,11 @@ import { checkAvailability, getRegisterPrice, tldOf } from '../launch/namecheap.
 import { buildQuote } from '../launch/pricing.js';
 import { createCheckout, constructEvent } from '../launch/stripe.js';
 import { runLaunch } from '../launch/launch.js';
+import { deployPreview } from '../deploy/r2.js';
 import { createJob, updateJob, getJob } from './jobs.js';
 
 const app = express();
+app.set('trust proxy', 1); // behind Caddy — lets express-rate-limit read the real client IP
 const ORIGIN = config.appOrigin || 'https://app.dksites.com';
 
 // ---- Stripe webhook FIRST: needs the raw body, so it must precede express.json() ----
@@ -73,32 +75,74 @@ app.post('/api/lookup', async (req, res) => {
 });
 
 // ---- Generate: kick off a background job, return jobId for polling ----
+// The facts handoff: if the request carries the facts from /api/lookup (either top-level
+// or nested under business.facts), the pipeline builds from that CONFIRMED data — no
+// re-extraction, no duplicate Places call, no resolving to the wrong business.
+function slugify(name, fallback) {
+  const s = String(name || '')
+    .toLowerCase()
+    .replace(/['’]/g, '')                 // apostrophes vanish: Riley's -> rileys
+    .replace(/[^a-z0-9]+/g, '-')          // runs of anything else -> single dash
+    .replace(/^-+|-+$/g, '')              // trim edge dashes
+    .slice(0, 40)
+    .replace(/-+$/g, '');
+  return s || (fallback || 'preview').slice(0, 8);
+}
+
+// Minimal-but-complete facts shape for description-only (greenfield) builds, so triage
+// and brand analysis run without a Places extraction that would fail or mis-resolve.
+function greenfieldFacts(description, name) {
+  return {
+    query: description,
+    fetchedAt: new Date().toISOString(),
+    identity: { placeId: null, name: name || null, address: null, location: null, phone: null, website: null },
+    operational: { hours: null, priceLevel: null },
+    atmosphere: { editorialSummary: description, primaryType: null, primaryTypeDisplayName: null, types: [], attributes: {} },
+    socialProof: { rating: null, userRatingCount: 0, reviews: [] },
+    assets: { photos: [], logo: null, favicon: null, legacyColors: [] },
+    launch: { registrar: null, walkthroughKey: 'generic', transferLocked: null, nameservers: [] },
+    attributions: [],
+    _sources: { google: false, greenfield: true },
+  };
+}
+
 app.post('/api/generate', genLimiter, async (req, res) => {
-  const { mode, business, description, facts } = req.body || {};
+  const { business, description } = req.body || {};
+  const facts = req.body?.facts || business?.facts || null; // accept both shapes
   const jobId = createJob();
   res.json({ jobId });
 
-  // Run in the background; the front end polls /status.
   (async () => {
     try {
-      updateJob(jobId, { status: 'running', stage: 'Reading your business…', progress: 0.1 });
-      // Greenfield builds from a description; existing builds from resolved facts.
-      const query = business?.name || description || '(from input)';
+      const bizName = facts?.identity?.name || business?.name || null;
+      updateJob(jobId, { status: 'running', stage: bizName ? `Reading ${bizName}…` : 'Reading your description…', progress: 0.1 });
+
       const opts = {};
-      if (facts) {
-        // Reuse already-extracted facts by writing a temp fixture path is overkill;
-        // pipeline accepts a query, so for existing we pass the name and let extract run,
-        // OR (future) refactor pipeline to accept facts directly. For now, query-based.
+      if (facts?.identity) {
+        opts.facts = facts;                              // confirmed-business handoff
+      } else if (description) {
+        opts.facts = greenfieldFacts(description, bizName); // description-only build
+      } else if (!bizName) {
+        throw new Error('Nothing to build from — no business facts and no description.');
       }
-      updateJob(jobId, { stage: 'Designing your site…', progress: 0.4 });
-      const result = await runPipeline(query, opts);
+      // (If only a name arrived with no facts, the pipeline falls back to extraction.)
+
+      updateJob(jobId, { stage: 'Designing your site…', progress: 0.35 });
+      const result = await runPipeline(bizName || description, opts);
+
+      updateJob(jobId, { stage: 'Publishing your live preview…', progress: 0.85 });
+      const slug = slugify(bizName || description, result.preview.id);
+      const deployed = await deployPreview(result.preview.dir, slug);
+
       updateJob(jobId, {
         status: 'done', stage: 'Live preview ready', progress: 1,
         result: {
           previewId: result.preview.id,
-          previewUrl: result.preview.url,
+          slug: deployed.slug,
+          previewUrl: deployed.url,               // real https://<slug>.dksites.com/
           version: result.preview.version,
           decisions: result.decisions,
+          suggestedAsks: result.facts?.triage?.suggestedAsks || [],
         },
       });
     } catch (e) {

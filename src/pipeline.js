@@ -11,14 +11,20 @@ const log = (...a) => console.log('›', ...a);
 /**
  * Full pipeline: extract -> triage -> analyze -> generate -> write -> QA.
  * @param {string} query  business name (+ locality)
- * @param {object} opts   { dryRun, factsFile, skipQA }
+ * @param {object} opts   { dryRun, factsFile, skipQA, facts }
+ *   opts.facts: pre-extracted business_facts (e.g. from /api/lookup) — skips extraction
+ *   entirely so the site is built from the SAME data the user confirmed, with no
+ *   duplicate Places call and no risk of resolving to a different business.
  */
 export async function runPipeline(query, opts = {}) {
-  const { dryRun = false, factsFile = null, skipQA = false } = opts;
+  const { dryRun = false, factsFile = null, skipQA = false, facts: providedFacts = null } = opts;
 
-  // 1. EXTRACT (or load fixture for offline dry runs)
+  // 1. EXTRACT (or use handed-off facts / fixture)
   let facts;
-  if (factsFile) {
+  if (providedFacts) {
+    log(`Using confirmed facts for: ${providedFacts?.identity?.name || query}`);
+    facts = providedFacts;
+  } else if (factsFile) {
     log(`Loading facts fixture: ${factsFile}`);
     facts = JSON.parse(await readFile(factsFile, 'utf8'));
   } else {
