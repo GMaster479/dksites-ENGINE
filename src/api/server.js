@@ -66,13 +66,10 @@ app.post('/api/lookup', async (req, res) => {
     const { extractBusinessFacts } = await import('../extract/index.js');
     const facts = await extractBusinessFacts(`${name}${city ? `, ${city}` : ''}`);
     res.json({
-      name: facts.identity?.name || null,
-      address: facts.identity?.address || null,
-      rating: facts.socialProof?.rating || null,
-      userRatingCount: facts.socialProof?.userRatingCount || null,
-      primaryType: facts.atmosphere?.primaryTypeDisplayName || null,
+      name: facts.name, address: facts.address || null,
+      rating: facts.rating || null, userRatingCount: facts.userRatingCount || null,
       photo: facts.assets?.photos?.[0]?.url || null,
-      facts,
+      facts, // front end keeps this to pass into generate
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -173,10 +170,17 @@ app.get('/api/edit-options/:previewId', async (req, res) => {
 // ---- Apply an edit (prompt / palette / font / menu) — regenerates in place ----
 app.post('/api/apply-edit', async (req, res) => {
   try {
-    const { previewId, instruction } = req.body || {};
+    const { previewId, instruction, slug } = req.body || {};
     if (!previewId) return res.status(400).json({ error: 'previewId required' });
     const { preview, editInstruction } = await applyEdit(previewId, { instruction: instruction || null });
-    res.json({ version: preview.version, url: preview.url, applied: editInstruction });
+    // Redeploy so the live <slug>.dksites.com preview reflects the edit immediately.
+    let liveUrl = preview.url;
+    if (slug) {
+      const { join } = await import('node:path');
+      const deployed = await deployPreview(join(config.previewDir, previewId), slug);
+      liveUrl = deployed.url;
+    }
+    res.json({ version: preview.version, url: liveUrl, applied: editInstruction });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
