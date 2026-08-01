@@ -48,7 +48,64 @@ export async function writePreview(facts, decisions, generated, opts = {}) {
     JSON.stringify({ version, history, facts, decisions, generated, assets }, null, 2)
   );
 
+  // Debug contact sheet: every downloaded photo next to the label vision gave it.
+  // Deployed with the site, so it's viewable at <slug>.dksites.com/_labels.html —
+  // the fastest way to see whether a bad placement is a MISLABEL or a placement failure.
+  await writeLabelSheet(facts, dir);
+
   return { id, dir, url: `${config.previewBaseUrl}/${id}/`, written, assets, version };
+}
+
+const esc = (v) =>
+  String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function writeLabelSheet(facts, dir) {
+  const photos = (facts.triage?.rankedPhotos || []).slice(0, 10);
+  if (!photos.length) return;
+
+  const cards = photos
+    .map((p, i) => {
+      const path = `images/photo-${i + 1}.webp`;
+      const conf = p.activityConfidence != null ? ` (${Math.round(p.activityConfidence * 100)}%)` : '';
+      const issues = p.issues?.length ? `<div class="row warn">issues: ${esc(p.issues.join(', '))}</div>` : '';
+      return `<figure>
+  <img src="${path}" alt="" loading="lazy">
+  <figcaption>
+    <div class="file">${path}</div>
+    <div class="act">${p.activity ? esc(p.activity) + esc(conf) : 'general (no activity)'}</div>
+    <div class="row">${esc(p.caption || '(unlabeled)')}</div>
+    <div class="row dim">kind: ${esc(p.kind || '-')}${p.isHero ? ' · RECOMMENDED HERO' : ''}${p.heroGrade ? ' · hero-grade' : ''}</div>
+    ${issues}
+  </figcaption>
+</figure>`;
+    })
+    .join('\n');
+
+  const html = `<!doctype html>
+<meta charset="utf-8"><meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Photo labels — ${esc(facts.identity?.name || 'preview')}</title>
+<style>
+  body{background:#111;color:#eee;font:15px/1.5 system-ui,sans-serif;margin:0;padding:24px}
+  h1{font-size:1.2rem;margin:0 0 4px}
+  .sum{color:#9a958b;margin:0 0 20px}
+  .grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+  figure{margin:0;background:#1c1c1c;border:1px solid #333;border-radius:10px;overflow:hidden}
+  img{width:100%;height:190px;object-fit:cover;display:block;background:#000}
+  figcaption{padding:10px 12px}
+  .file{font-family:ui-monospace,monospace;font-size:.75rem;color:#8a8a8a}
+  .act{font-weight:600;color:#E8C17A;margin:2px 0 6px}
+  .row{margin:2px 0}
+  .dim{color:#9a958b;font-size:.85rem}
+  .warn{color:#e0a1a1;font-size:.85rem}
+</style>
+<h1>Photo labels — ${esc(facts.identity?.name || 'preview')}</h1>
+<p class="sum">${esc(facts.triage?.photoSummary || 'No vision summary.')}</p>
+<div class="grid">
+${cards}
+</div>`;
+
+  try { await writeFile(join(dir, '_labels.html'), html, 'utf8'); } catch {}
 }
 
 async function downloadAssets(facts, dir) {
