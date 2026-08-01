@@ -66,8 +66,11 @@ app.post('/api/lookup', async (req, res) => {
     const { extractBusinessFacts } = await import('../extract/index.js');
     const facts = await extractBusinessFacts(`${name}${city ? `, ${city}` : ''}`);
     res.json({
-      name: facts.name, address: facts.address || null,
-      rating: facts.rating || null, userRatingCount: facts.userRatingCount || null,
+      name: facts.identity?.name || null,
+      address: facts.identity?.address || null,
+      rating: facts.socialProof?.rating || null,
+      userRatingCount: facts.socialProof?.userRatingCount || null,
+      primaryType: facts.atmosphere?.primaryTypeDisplayName || null,
       photo: facts.assets?.photos?.[0]?.url || null,
       facts, // front end keeps this to pass into generate
     });
