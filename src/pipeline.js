@@ -11,20 +11,14 @@ const log = (...a) => console.log('›', ...a);
 /**
  * Full pipeline: extract -> triage -> analyze -> generate -> write -> QA.
  * @param {string} query  business name (+ locality)
- * @param {object} opts   { dryRun, factsFile, skipQA, facts }
- *   opts.facts: pre-extracted business_facts (e.g. from /api/lookup) — skips extraction
- *   entirely so the site is built from the SAME data the user confirmed, with no
- *   duplicate Places call and no risk of resolving to a different business.
+ * @param {object} opts   { dryRun, factsFile, skipQA }
  */
 export async function runPipeline(query, opts = {}) {
-  const { dryRun = false, factsFile = null, skipQA = false, facts: providedFacts = null } = opts;
+  const { dryRun = false, factsFile = null, skipQA = false } = opts;
 
-  // 1. EXTRACT (or use handed-off facts / fixture)
+  // 1. EXTRACT (or load fixture for offline dry runs)
   let facts;
-  if (providedFacts) {
-    log(`Using confirmed facts for: ${providedFacts?.identity?.name || query}`);
-    facts = providedFacts;
-  } else if (factsFile) {
+  if (factsFile) {
     log(`Loading facts fixture: ${factsFile}`);
     facts = JSON.parse(await readFile(factsFile, 'utf8'));
   } else {
@@ -33,8 +27,13 @@ export async function runPipeline(query, opts = {}) {
   }
 
   // 2. TRIAGE
-  facts = triage(facts);
-  log(`Triage: ${facts.triage.greenfield ? 'GREENFIELD' : 'standard'} · ${facts.triage.usableCount} usable photos`);
+  facts = await triage(facts, { vision: !dryRun });
+  log(
+    `Triage: ${facts.triage.greenfield ? 'GREENFIELD' : 'standard'} · ${facts.triage.usableCount} usable photos` +
+      (facts.triage.labeled ? ' · photos labeled by vision' : '')
+  );
+  if (facts.triage.photoSummary) log(`Photos: ${facts.triage.photoSummary}`);
+  if (facts.assets.logoFromPhotos) log('Logo found inside the photo set — using it for the palette.');
   if (facts.triage.suggestedAsks.length) log('Suggested asks:', facts.triage.suggestedAsks);
 
   if (dryRun) {

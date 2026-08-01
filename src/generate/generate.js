@@ -30,9 +30,19 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
   const clientPrefix = slugPrefix(facts.identity.name);
 
   // Asset manifest = LOCAL relative paths only. The writer downloads sources to these paths.
+  // Captions come from the vision pass, so the generator can match each image to the
+  // section it actually belongs in instead of distributing them blindly.
   const photos = (facts.triage?.rankedPhotos || facts.assets.photos || [])
     .slice(0, 10)
-    .map((p, i) => ({ path: `images/photo-${i + 1}.webp`, heroGrade: !!p.heroGrade }));
+    .map((p, i) => ({
+      path: `images/photo-${i + 1}.webp`,
+      heroGrade: !!p.heroGrade,
+      ...(p.isHero ? { recommendedHero: true } : {}),
+      ...(p.caption ? { caption: p.caption } : {}),
+      ...(p.tags?.length ? { tags: p.tags } : {}),
+      ...(p.kind ? { kind: p.kind } : {}),
+      ...(p.issues?.length ? { issues: p.issues } : {}),
+    }));
   const assetManifest = {
     logo: facts.assets.logo ? 'images/logo.png' : null,
     favicon: facts.assets.favicon ? 'favicon.ico' : null,
@@ -67,6 +77,13 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
       `or invention), do not assert inferred facts, reference images ONLY by the local ` +
       `manifest paths, use the provided mapsEmbedUrl verbatim, derive the palette from the ` +
       `logo first, build ONE signature element, and use client-prefixed classes ("${clientPrefix}-").` +
+      `\n\nIMAGE PLACEMENT: every photo in assetManifest carries a caption describing what is ` +
+      `actually in it. Place each image only where its caption fits the surrounding copy — an ` +
+      `image whose caption contradicts its section is a defect, and it is better to reuse one ` +
+      `apt photo than to fill a slot with an unrelated one. Prefer "recommendedHero" for the ` +
+      `hero, avoid photos listed with issues for large/prominent placements, and never present ` +
+      `a "menu"/"screenshot"/"signage" image as ambience or product photography. Write alt text ` +
+      `from the caption.` +
       editBlock +
       `\n\nOutput using the delimited ===FILE:...=== format from the spec — NOT JSON.\n\n` +
       `INPUT:\n${JSON.stringify(user, null, 2)}`,
