@@ -78,19 +78,24 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
       `or invention), do not assert inferred facts, reference images ONLY by the local ` +
       `manifest paths, use the provided mapsEmbedUrl verbatim, derive the palette from the ` +
       `logo first, build ONE signature element, and use client-prefixed classes ("${clientPrefix}-").` +
-      `\n\nIMAGE PLACEMENT (strict): every photo in assetManifest carries a caption, and most ` +
-      `carry an "activity" naming which part of the business it shows. RULES:\n` +
-      `1. If a section is about a named activity, use ONLY photos whose "activity" matches it. ` +
+      `\n\nIMAGE PLACEMENT: every photo in assetManifest carries a caption, and most carry an ` +
+      `"activity" naming which part of the business it shows. Two failures matter equally: ` +
+      `putting a photo where it contradicts the copy, AND leaving a good photo unused.\n` +
+      `1. MATCH: a section about a named activity uses ONLY photos whose "activity" matches it. ` +
       `A mini-golf photo in a driving-range section is a defect, not a stylistic choice.\n` +
-      `2. If no photo matches a section's activity, use NO photo there (use the signature ` +
-      `element, a color block, or type-led layout instead). An empty slot beats a wrong image.\n` +
-      `3. Reusing one apt photo across two sections is better than filling a slot with an ` +
-      `unrelated one.\n` +
-      `4. Photos with no "activity" are safe only for generic use (hero, ambience, backgrounds) ` +
+      `2. COVER: aim to use every usable photo at least once. If you have a good photo of an ` +
+      `offering, that offering deserves its own section or card — let the photo set help decide ` +
+      `what the site covers, rather than fixing sections first and stranding photos.\n` +
+      `3. EXTERIOR/storefront photos belong in the location, hours, "Visit Us" or contact area — ` +
+      `pair one with the map rather than leaving it out.\n` +
+      `4. If a section has no matching photo, prefer an illustrative SVG, the signature element, ` +
+      `or a type-led layout over an unrelated photo. Never fill a slot with a contradicting image.\n` +
+      `5. Photos with no "activity" are for generic use (hero, ambience, backgrounds, dividers) ` +
       `— never to illustrate a specific named offering.\n` +
-      `5. Prefer "recommendedHero" for the hero; keep photos listed with issues out of large ` +
-      `placements; never present "menu"/"screenshot"/"signage" images as ambience or product ` +
-      `photography. Write alt text from the caption.` +
+      `6. Reusing one apt photo across two sections beats an unrelated one; prefer ` +
+      `"recommendedHero" for the hero; keep photos listed with issues out of large placements; ` +
+      `never present "menu"/"screenshot"/"signage" images as ambience or product photography. ` +
+      `Write alt text from the caption.` +
       editBlock +
       `\n\nOutput using the delimited ===FILE:...=== format from the spec — NOT JSON.\n\n` +
       `INPUT:\n${JSON.stringify(user, null, 2)}`,
