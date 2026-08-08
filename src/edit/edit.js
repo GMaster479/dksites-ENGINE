@@ -87,6 +87,15 @@ Respond with ONLY this JSON, no prose, no fences:
     palette: { current: decisions?.palette || null, alternates: ai.paletteAlternates || [] },
     fonts: { current: decisions?.typography || null, alternates: ai.fontAlternates || [] },
     suggestedPrompts,
+    // What the owner has ALREADY given us. The editor uses this to retire asks — otherwise
+    // it keeps asking for a logo that was uploaded two edits ago.
+    provided: {
+      logo: !!facts.assets?.logo,
+      logoUploaded: !!facts.assets?.logoUploaded,
+      menu: !!facts.knownMenu,
+      photos: (facts.triage?.rankedPhotos || []).length,
+      uploadedPhotos: (facts.triage?.rankedPhotos || []).filter((p) => p.assetPath).length,
+    },
     version: build.version,
   };
 }

@@ -115,6 +115,29 @@ spot for the details only you can give me." General true atmosphere copy ("rotat
   identity as a CSS monogram (initials), never a hotlinked avatar.
 - Voice matches the business. Write copy a real owner would approve.
 
+### 5a. SECTION SUB-NAV (default for any multi-section list)
+
+Whenever a page has 3+ peer sections a visitor scans between — menu categories, activity
+types, service lists, artist rosters — build a **single-row sticky sub-nav**, not a stack
+of jump links and not a multi-row wrap. This is the DK Sites house pattern:
+
+- **One row, horizontally scrollable.** The tabs never wrap to a second line. On narrow
+  screens the row scrolls sideways (`overflow-x:auto`, `scroll-snap-type: x proximity`,
+  hidden scrollbar). It sticks below the main header while its section group is in view.
+- **Scroll-spy the active tab** with `IntersectionObserver` — as the visitor scrolls the
+  page, the tab for the section currently in view becomes active. Do NOT drive this with
+  scroll-event listeners or `:target`.
+- **The active tab scrolls itself into view** inside the nav row (`scrollIntoView` with
+  `{ inline: 'center', block: 'nearest', behavior: 'smooth' }`), so the current category is
+  always visible even when the row has overflowed off-screen.
+- Clicking a tab smooth-scrolls to its section, offset by the sticky header height so the
+  heading isn't hidden underneath.
+- Accessible: real `<a href="#id">` anchors (works with JS off), `aria-current="true"` on
+  the active tab, visible focus ring, and honor `prefers-reduced-motion` by dropping the
+  smooth behavior.
+
+Vanilla JS only — no libraries, and keep the whole behavior under ~40 lines.
+
 ## 6. GREENFIELD MODE (thin/no data)
 
 If the business has no website and only light public text, do NOT fake content. Lean on
