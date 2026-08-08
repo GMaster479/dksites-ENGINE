@@ -50,7 +50,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), (req, res) =
 
 // ---- Everything else: JSON + CORS locked to the app, plus a health check ----
 app.use(cors({ origin: ORIGIN }));
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '24mb' }));
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Rate limit the money-costing path (generation). Anonymous is fine; this just stops abuse.
@@ -171,11 +171,67 @@ app.get('/api/edit-options/:previewId', async (req, res) => {
 });
 
 // ---- Apply an edit (prompt / palette / font / menu) — regenerates in place ----
+
+// ---- Upload a logo / menu / photo into a preview -------------------------------
+// Base64 JSON rather than multipart: no extra dependency to install on the box, and the
+// files are small. Everything lands inside the preview's own images/ dir, so nothing is
+// re-downloaded later and the generator can reference it by relative path.
+const UPLOAD_EXT = {
+  'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif',
+  'application/pdf': 'pdf',
+};
+const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
+
+app.post('/api/upload', async (req, res) => {
+  try {
+    const { previewId, kind, mimeType, dataBase64 } = req.body || {};
+    if (!previewId || !kind || !dataBase64) return res.status(400).json({ error: 'previewId, kind and dataBase64 required' });
+    if (!['logo', 'menu', 'photo'].includes(kind)) return res.status(400).json({ error: 'kind must be logo, menu or photo' });
+
+    const ext = UPLOAD_EXT[mimeType];
+    if (!ext) return res.status(415).json({ error: 'Unsupported file type. Use PNG, JPG, WEBP, GIF or PDF.' });
+    if (kind !== 'menu' && ext === 'pdf') return res.status(415).json({ error: 'Logos and photos must be images.' });
+
+    const buf = Buffer.from(dataBase64, 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'Empty file.' });
+    if (buf.length > MAX_UPLOAD_BYTES) return res.status(413).json({ error: 'File is too large (12MB max).' });
+
+    const { join } = await import('node:path');
+    const { mkdir, writeFile, readdir } = await import('node:fs/promises');
+    const previewDir = join(config.previewDir, previewId);
+
+    let assetPath;
+    if (kind === 'menu') {
+      assetPath = `uploads/menu.${ext}`;
+    } else if (kind === 'logo') {
+      assetPath = `images/logo-upload.${ext}`;
+    } else {
+      let n = 1;
+      try {
+        const existing = await readdir(join(previewDir, 'images'));
+        n = existing.filter((f) => f.startsWith('upload-')).length + 1;
+      } catch {}
+      assetPath = `images/upload-${n}.${ext}`;
+    }
+
+    const full = join(previewDir, assetPath);
+    await mkdir(join(previewDir, assetPath.split('/')[0]), { recursive: true });
+    await writeFile(full, buf);
+
+    res.json({ kind, assetPath, path: full, bytes: buf.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/apply-edit', async (req, res) => {
   try {
-    const { previewId, instruction, slug } = req.body || {};
+    const { previewId, instruction, slug, logoFile, menuFile, photoFiles } = req.body || {};
     if (!previewId) return res.status(400).json({ error: 'previewId required' });
-    const { preview, editInstruction } = await applyEdit(previewId, { instruction: instruction || null });
+    const { preview, editInstruction } = await applyEdit(previewId, {
+      instruction: instruction || null,
+      logoFile: logoFile || null,
+      menuFilePath: menuFile?.path || null,
+      photoFiles: Array.isArray(photoFiles) ? photoFiles : [],
+    });
     // Redeploy so the live <slug>.dksites.com preview reflects the edit immediately.
     let liveUrl = preview.url;
     if (slug) {

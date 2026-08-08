@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
+import { imageBlockFrom } from './image-block.js';
 
 // Stage 2: turn facts into an explicit, reviewable set of DESIGN DECISIONS before any
 // code is written. The logo image is attached as a vision input so the palette is
@@ -43,19 +44,6 @@ Respond with ONLY a JSON object, no prose, no markdown fences:
 const ALLOWED_IMG = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 
 /** Download an image URL into an Anthropic image content block (base64). */
-async function fetchImageBlock(url) {
-  try {
-    const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    const media_type = (res.headers.get('content-type') || 'image/png').split(';')[0].trim();
-    if (!ALLOWED_IMG.includes(media_type)) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > 4_500_000) return null; // too large to inline cheaply; skip
-    return { type: 'image', source: { type: 'base64', media_type, data: buf.toString('base64') } };
-  } catch {
-    return null;
-  }
-}
 
 export async function analyzeBrand(facts) {
   const client = new Anthropic({ apiKey: config.anthropicKey });
@@ -64,7 +52,7 @@ export async function analyzeBrand(facts) {
   const content = [];
   // Attach the logo as the palette anchor when we have one.
   if (facts.assets.logo) {
-    const logoBlock = await fetchImageBlock(facts.assets.logo);
+    const logoBlock = await imageBlockFrom(facts.assets.logo);
     if (logoBlock) {
       content.push({ type: 'text', text: 'LOGO IMAGE (palette anchor — derive the dominant brand color from this):' });
       content.push(logoBlock);

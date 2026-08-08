@@ -35,7 +35,8 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
   const photos = (facts.triage?.rankedPhotos || facts.assets.photos || [])
     .slice(0, 10)
     .map((p, i) => ({
-      path: `images/photo-${i + 1}.webp`,
+      path: p.assetPath || `images/photo-${i + 1}.webp`,
+      ...(p.assetPath ? { ownerUploaded: true } : {}),
       heroGrade: !!p.heroGrade,
       ...(p.isHero ? { recommendedHero: true } : {}),
       ...(p.caption ? { caption: p.caption } : {}),
@@ -45,7 +46,7 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
       ...(p.issues?.length ? { issues: p.issues } : {}),
     }));
   const assetManifest = {
-    logo: facts.assets.logo ? 'images/logo.png' : null,
+    logo: facts.assets.logoAssetPath || (facts.assets.logo ? 'images/logo.png' : null),
     favicon: facts.assets.favicon ? 'favicon.ico' : null,
     photos,
   };

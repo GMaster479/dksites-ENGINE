@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
+import { imageBlockFrom } from './image-block.js';
 
 // VISION PASS — runs inside triage, before generation.
 //
@@ -70,20 +71,6 @@ function thumbUrl(url) {
   return typeof url === 'string' ? url.replace(/maxWidthPx=\d+/, `maxWidthPx=${THUMB_WIDTH}`) : url;
 }
 
-/** Download one image into an Anthropic base64 image block, or null if unusable. */
-async function fetchImageBlock(url) {
-  try {
-    const res = await fetch(thumbUrl(url), { signal: AbortSignal.timeout(15000) });
-    if (!res.ok) return null;
-    const media_type = (res.headers.get('content-type') || '').split(';')[0].trim();
-    if (!ALLOWED_IMG.includes(media_type)) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (!buf.length) return null;
-    return { type: 'image', source: { type: 'base64', media_type, data: buf.toString('base64') } };
-  } catch {
-    return null;
-  }
-}
 
 function parseJson(text) {
   const clean = text.replace(/```json|```/g, '').trim();
@@ -112,7 +99,7 @@ export async function describePhotos(photos = [], context = {}) {
   // Fetch in parallel, but remember each image's ORIGINAL 1-based manifest position so a
   // failed download doesn't shift every caption onto the wrong file.
   const blocks = await Promise.all(
-    list.map(async (p, idx) => ({ i: idx + 1, block: await fetchImageBlock(p.url) }))
+    list.map(async (p, idx) => ({ i: idx + 1, block: await imageBlockFrom(p.assetPath || thumbUrl(p.url), { timeoutMs: 15000 }) }))
   );
   const usable = blocks.filter((b) => b.block);
   if (!usable.length) return null;

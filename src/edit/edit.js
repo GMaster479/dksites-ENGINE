@@ -7,6 +7,8 @@ import { parseJson } from '../analyze/brand.js';
 import { generateSite } from '../generate/generate.js';
 import { writePreview } from '../generate/writer.js';
 import { extractMenuFromFile } from '../extract/menu.js';
+import { analyzeBrand } from '../analyze/brand.js';
+import { describePhotos } from '../analyze/vision.js';
 
 // The editor engine. Powers the three zones of the edit screen:
 //   A. palette + fonts (current + alternates to pick from)
@@ -92,13 +94,18 @@ Respond with ONLY this JSON, no prose, no fences:
 /**
  * ZONE C (and structured picks from A/B): apply an edit and regenerate in place.
  * @param {string} previewId
- * @param {object} change  { instruction?, menuFilePath?, setPalette?, setFonts? }
+ * @param {object} change  { instruction?, menuFilePath?, logoFile?, photoFiles?, setPalette?, setFonts? }
+ *   logoFile/photoFiles are { path, assetPath } records written by /api/upload — the file
+ *   already sits inside the preview's images/ dir, so nothing is re-downloaded.
  */
 export async function applyEdit(previewId, change = {}) {
   const build = await loadBuild(previewId);
   const facts = structuredClone(build.facts);
   const decisions = structuredClone(build.decisions || {});
-  const { instruction = null, menuFilePath = null, setPalette = null, setFonts = null } = change;
+  const {
+    instruction = null, menuFilePath = null, setPalette = null, setFonts = null,
+    logoFile = null, photoFiles = [],
+  } = change;
 
   // 1. Menu file -> knownMenu (the only sanctioned menu source).
   let menuSummary = null;
@@ -106,6 +113,50 @@ export async function applyEdit(previewId, change = {}) {
     const menu = await extractMenuFromFile(menuFilePath);
     facts.knownMenu = menu;
     menuSummary = `${menu._itemCount} items across ${(menu.sections || []).length} sections`;
+  }
+
+  // 1b. Uploaded LOGO -> becomes the palette anchor, and the brand is re-analyzed so the
+  //     colors are actually derived from it (the promise the suggested ask makes).
+  let logoSummary = null;
+  let rebuiltPalette = null;
+  if (logoFile?.path) {
+    facts.assets = { ...facts.assets, logo: logoFile.path, logoAssetPath: logoFile.assetPath, logoUploaded: true };
+    try {
+      const rebrand = await analyzeBrand(facts);
+      if (rebrand?.palette) {
+        decisions.palette = rebrand.palette;
+        decisions.typography = rebrand.typography || decisions.typography;
+        rebuiltPalette = rebrand.palette;
+      }
+    } catch { /* keep existing decisions if the re-analysis fails */ }
+    logoSummary = 'logo uploaded';
+  }
+
+  // 1c. Uploaded PHOTOS -> captioned by the vision pass, then added to the ranked set so
+  //     the generator can place them by what they actually show.
+  let photoSummary = null;
+  if (photoFiles.length) {
+    const added = photoFiles.map((f) => ({
+      url: null, assetPath: f.assetPath, path: f.path,
+      source: 'upload', score: 6, heroGrade: true, widthPx: f.widthPx || null,
+    }));
+    try {
+      const seen = await describePhotos(added.map((a) => ({ ...a, url: a.path })), {
+        name: facts.identity?.name || null,
+        type: facts.atmosphere?.primaryTypeDisplayName || null,
+        summary: facts.atmosphere?.editorialSummary || null,
+      });
+      for (const label of seen?.photos || []) {
+        const t = added[Number(label.i) - 1];
+        if (!t) continue;
+        t.caption = label.caption || null;
+        t.kind = label.kind || null;
+        if (label.activity && (label.confidence ?? 1) >= 0.6) t.activity = label.activity;
+      }
+    } catch { /* unlabeled uploads still get used */ }
+    const ranked = facts.triage?.rankedPhotos || [];
+    facts.triage = { ...(facts.triage || {}), rankedPhotos: [...added, ...ranked] };
+    photoSummary = `${added.length} new photo${added.length > 1 ? 's' : ''}`;
   }
 
   // 2. Structured design picks from the palette/font choosers.
@@ -118,15 +169,22 @@ export async function applyEdit(previewId, change = {}) {
   if (setFonts) parts.push(`Use ${setFonts.display} for headings and ${setFonts.body} for body text.`);
   if (setPalette) parts.push(`Use ${setPalette.dominant} as the dominant color and ${setPalette.accent} as the accent.`);
   if (menuSummary) parts.push(`Replace any menu placeholders with the real knownMenu provided (${menuSummary}).`);
+  if (logoSummary)
+    parts.push(
+      `The owner uploaded their real logo — show it in the header/footer` +
+        (rebuiltPalette ? ` and rebuild the palette around it (dominant ${rebuiltPalette.dominant}, accent ${rebuiltPalette.accent}).` : '.')
+    );
+  if (photoSummary) parts.push(`Use the ${photoSummary} the owner just uploaded, placed by their captions.`);
   const editInstruction = parts.join(' ') || 'Regenerate with the updated brand decisions.';
 
   // 4. Regenerate and write in place (keep assets, bump version, log history).
   const generated = await generateSite(facts, decisions, { editInstruction });
   const preview = await writePreview(facts, decisions, generated, {
     id: previewId,
-    skipAssets: !menuFilePath, // only re-fetch assets if something asset-like changed
+    // Uploaded files already live in the preview dir, so no re-fetch is needed for them.
+    skipAssets: !menuFilePath && !logoFile && !photoFiles.length,
     editInstruction,
   });
 
-  return { preview, editInstruction, menuSummary };
+  return { preview, editInstruction, menuSummary, logoSummary, photoSummary, palette: rebuiltPalette };
 }

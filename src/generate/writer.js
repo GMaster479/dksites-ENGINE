@@ -109,10 +109,16 @@ ${cards}
 }
 
 async function downloadAssets(facts, dir) {
+  // Entries with assetPath were uploaded by the owner and already sit in images/ —
+  // they must never be fetched or overwritten.
+  // Index FIRST, then drop uploads — the generator numbers photo-N across the whole list,
+  // so filtering before the map would shift every remaining file off its manifest path.
   const assetMap = (facts.triage?.rankedPhotos || facts.assets.photos || [])
     .slice(0, 10)
-    .map((p, i) => ({ url: p.url, path: `images/photo-${i + 1}.webp` }));
-  if (facts.assets.logo) assetMap.push({ url: facts.assets.logo, path: 'images/logo.png' });
+    .map((p, i) => ({ url: p.url, path: p.assetPath || `images/photo-${i + 1}.webp`, onDisk: !!p.assetPath }))
+    .filter((a) => !a.onDisk && a.url);
+  if (facts.assets.logo && !facts.assets.logoAssetPath)
+    assetMap.push({ url: facts.assets.logo, path: 'images/logo.png' });
   if (facts.assets.favicon) assetMap.push({ url: facts.assets.favicon, path: 'favicon.ico' });
 
   const assets = [];
