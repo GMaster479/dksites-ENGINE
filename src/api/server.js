@@ -222,6 +222,31 @@ app.post('/api/upload', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Import an image the owner already has online. We DOWNLOAD and self-host it — never
+// hotlink — so their site can't break when someone else's server changes. If the fetch
+// fails we say so plainly and ask them to upload the file instead.
+app.post('/api/import-image', async (req, res) => {
+  const CANT = 'Could not download that image. Save it to your device and upload it instead.';
+  try {
+    const { previewId, url, kind = 'photo' } = req.body || {};
+    if (!previewId || !url) return res.status(400).json({ error: 'previewId and url required' });
+    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Use a full http(s) image address.' });
+    let r;
+    try {
+      r = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(15000) });
+    } catch { return res.status(422).json({ error: CANT }); }
+    if (!r.ok) return res.status(422).json({ error: CANT });
+    const mimeType = (r.headers.get('content-type') || '').split(';')[0].trim();
+    const ext = UPLOAD_EXT[mimeType];
+    if (!ext || ext === 'pdf') return res.status(415).json({ error: 'That address is not an image file.' });
+    const buf = Buffer.from(await r.arrayBuffer());
+    if (!buf.length) return res.status(422).json({ error: CANT });
+    if (buf.length > MAX_UPLOAD_BYTES) return res.status(413).json({ error: 'That image is too large (12MB max).' });
+    const { assetPath, full } = await storeUpload(previewId, kind === 'logo' ? 'logo' : 'photo', ext, buf);
+    res.json({ kind, assetPath, path: full, bytes: buf.length, importedFrom: url });
+  } catch { res.status(422).json({ error: CANT }); }
+});
+
 app.post('/api/apply-edit', async (req, res) => {
   try {
     const { previewId, instruction, slug, logoFile, menuFile, photoFiles } = req.body || {};

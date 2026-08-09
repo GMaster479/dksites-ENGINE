@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
+import { BRIDGE_JS, injectBridge } from './bridge-script.js';
 
 /**
  * Write a generated site to PREVIEW_DIR/<id>/ and (on first build) download referenced
@@ -30,9 +31,13 @@ export async function writePreview(facts, decisions, generated, opts = {}) {
   for (const file of generated.files) {
     const full = join(dir, file.path);
     await mkdir(dirname(full), { recursive: true });
-    await writeFile(full, file.contents, 'utf8');
+    // HTML gets the editor bridge so images are clickable inside the editor iframe.
+    // It's inert outside an iframe, so a launched site is unaffected.
+    const contents = file.path.endsWith('.html') ? injectBridge(file.contents) : file.contents;
+    await writeFile(full, contents, 'utf8');
     written.push(file.path);
   }
+  await writeFile(join(dir, '_bridge.js'), BRIDGE_JS, 'utf8');
 
   let assets = prior?.assets || [];
   if (!skipAssets) {
