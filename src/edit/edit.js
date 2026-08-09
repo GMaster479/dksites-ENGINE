@@ -82,6 +82,27 @@ Respond with ONLY this JSON, no prose, no fences:
   for (const c of ai.confirmations || []) suggestedPrompts.push({ type: 'confirm', ...c });
   for (const f of ai.featureSuggestions || []) suggestedPrompts.push({ type: 'feature', ...f });
 
+  // Normalize before anything renders these. The model's confirmation/feature objects
+  // don't always carry a `label`, which is where the blank suggestion chips came from.
+  // `priority` splits the list: HIGH items are the things only the owner can give us and
+  // belong in the prominent asks panel; LOW items are nice-to-haves for the sidebar.
+  const normalized = suggestedPrompts
+    .map((p) => {
+      const label = String(p.label || p.text || p.question || p.prompt || '').trim();
+      return { ...p, label, prompt: p.prompt || label };
+    })
+    .filter((p) => p.label.length > 3)
+    .map((p) => ({ ...p, priority: p.type === 'menu_upload' ? 'high' : 'low' }));
+
+  // De-dupe by label so the same ask can't appear twice.
+  const seenLabels = new Set();
+  const cleanPrompts = normalized.filter((p) => {
+    const k = p.label.toLowerCase();
+    if (seenLabels.has(k)) return false;
+    seenLabels.add(k);
+    return true;
+  });
+
   return {
     previewId: undefined, // set by caller
     palette: { current: decisions?.palette || null, alternates: ai.paletteAlternates || [] },
