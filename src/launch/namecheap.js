@@ -128,3 +128,22 @@ export async function registerDomain(domain, years = 1) {
     charged: parseFloat(r.attr('ChargedAmount') || '') || null,
   };
 }
+
+/**
+ * Point a domain we just registered at Cloudflare's nameservers. This is the step that
+ * actually makes the site reachable — without it the domain is registered but resolves
+ * to Namecheap's parking page.
+ */
+export async function setNameservers(domain, nameservers = []) {
+  if (!nameservers.length) throw new Error('No nameservers to set.');
+  const [sld, ...rest] = domain.split('.');
+  const xml = await call('namecheap.domains.dns.setCustom', {
+    SLD: sld,
+    TLD: rest.join('.'),
+    Nameservers: nameservers.join(','),
+  });
+  const $ = cheerio.load(normalize(xml), { xmlMode: true });
+  ensureOk($, 'domains.dns.setCustom');
+  const r = $('DomainDNSSetCustomResult').first();
+  return { domain, updated: (r.attr('Update') || '').toLowerCase() === 'true', nameservers };
+}

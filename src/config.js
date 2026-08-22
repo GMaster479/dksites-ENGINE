@@ -24,7 +24,9 @@ export const config = {
   // ── Cloudflare / R2 (hosting + launch) ──
   cfAccountId: process.env.CF_ACCOUNT_ID || '',
   cfZoneId: process.env.CF_ZONE_ID || '',
-  cfApiToken: process.env.CF_API_TOKEN || '', // secret — custom hostnames / DNS
+  // Accept either name — the box's .env uses CLOUDFLARE_API_TOKEN (wrangler's convention).
+  cfApiToken: process.env.CF_API_TOKEN || process.env.CLOUDFLARE_API_TOKEN || '',
+  workerName: process.env.WORKER_NAME || 'dksites-router',
   r2Bucket: process.env.R2_BUCKET || 'dksites-previews',
   r2AccessKeyId: process.env.R2_ACCESS_KEY_ID || '', // secret
   r2SecretKey: process.env.R2_SECRET_ACCESS_KEY || '', // secret
