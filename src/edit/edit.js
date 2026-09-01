@@ -53,6 +53,7 @@ Respond with ONLY this JSON, no prose, no fences:
 {
   "paletteAlternates": [ { "label": "", "dominant": "#hex", "accent": "#hex" } ],
   "fontAlternates": [ { "label": "", "display": "Google Font", "body": "Google Font" } ],
+  "examplePrompts": ["<2-3 short concrete changes someone might ask for on THIS site, referencing its real sections/colors/content>"],
   "confirmations": [ { "field": "foundingYear", "question": "Are you Est. 2010?", "guess": "2010" } ],
   "featureSuggestions": [ { "label": "Add online ordering button", "prompt": "Add an online ordering CTA linking to our ordering page" } ]
 }`;
@@ -108,6 +109,10 @@ Respond with ONLY this JSON, no prose, no fences:
     palette: { current: decisions?.palette || null, alternates: ai.paletteAlternates || [] },
     fonts: { current: decisions?.typography || null, alternates: ai.fontAlternates || [] },
     suggestedPrompts,
+    examplePrompts: (ai.examplePrompts || [])
+      .map((e) => String(e || '').trim())
+      .filter((e) => e.length > 8)
+      .slice(0, 3),
     // What the owner has ALREADY given us. The editor uses this to retire asks — otherwise
     // it keeps asking for a logo that was uploaded two edits ago.
     provided: {

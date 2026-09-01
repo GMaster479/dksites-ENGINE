@@ -248,24 +248,40 @@ app.post('/api/import-image', async (req, res) => {
 });
 
 app.post('/api/apply-edit', async (req, res) => {
-  try {
-    const { previewId, instruction, slug, logoFile, menuFile, photoFiles } = req.body || {};
-    if (!previewId) return res.status(400).json({ error: 'previewId required' });
-    const { preview, editInstruction } = await applyEdit(previewId, {
-      instruction: instruction || null,
-      logoFile: logoFile || null,
-      menuFilePath: menuFile?.path || null,
-      photoFiles: Array.isArray(photoFiles) ? photoFiles : [],
-    });
-    // Redeploy so the live <slug>.dksites.com preview reflects the edit immediately.
-    let liveUrl = preview.url;
-    if (slug) {
-      const { join } = await import('node:path');
-      const deployed = await deployPreview(join(config.previewDir, previewId), slug);
-      liveUrl = deployed.url;
+  const { previewId, instruction, slug, logoFile, menuFile, photoFiles, setPalette, setFonts } = req.body || {};
+  if (!previewId) return res.status(400).json({ error: 'previewId required' });
+
+  const jobId = createJob(); // apply-edit runs as a background job; poll /api/status/:jobId
+  res.json({ jobId });
+
+  (async () => {
+    try {
+      updateJob(jobId, { status: 'running', stage: 'Rebuilding your site…', progress: 0.2 });
+      const { preview, editInstruction } = await applyEdit(previewId, {
+        instruction: instruction || null,
+        logoFile: logoFile || null,
+        menuFilePath: menuFile?.path || null,
+        photoFiles: Array.isArray(photoFiles) ? photoFiles : [],
+        setPalette: setPalette || null,
+        setFonts: setFonts || null,
+      });
+
+      let liveUrl = preview.url;
+      if (slug) {
+        updateJob(jobId, { stage: 'Publishing your updated preview…', progress: 0.85 });
+        const { join } = await import('node:path');
+        const deployed = await deployPreview(join(config.previewDir, previewId), slug);
+        liveUrl = deployed.url;
+      }
+
+      updateJob(jobId, {
+        status: 'done', stage: 'Your changes are live', progress: 1,
+        result: { version: preview.version, url: liveUrl, applied: editInstruction },
+      });
+    } catch (e) {
+      updateJob(jobId, { status: 'error', error: e.message });
     }
-    res.json({ version: preview.version, url: liveUrl, applied: editInstruction });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  })();
 });
 
 // ---- Domain availability + verified quote ----
