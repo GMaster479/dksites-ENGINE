@@ -299,6 +299,31 @@ app.get('/api/check', async (req, res) => {
 });
 
 // ---- Create Stripe Checkout (margin guard: refuse estimated prices) ----
+// Pricing when the client brings their own domain: nothing to pass through, so the bill
+// is the hosting line plus the same service fee. They keep paying their own registrar for
+// the domain itself — which the app has to say out loud, because if it lapses the site
+// goes down no matter who hosts it.
+function ownDomainQuote(domain) {
+  const hosting = config.hostingPriceYear;
+  const appFee = Math.round(config.appFeeRate * hosting * 100) / 100;
+  const total = Math.round((hosting + appFee) * 100) / 100;
+  return {
+    domain: domain || null,
+    ownDomain: true,
+    currency: 'usd',
+    lineItems: [
+      { key: 'hosting', label: 'Hosting, SSL & email (1 yr)', amount: hosting },
+      { key: 'appfee', label: `DK Sites service fee (${Math.round(config.appFeeRate * 100)}%)`, amount: appFee },
+    ],
+    subtotal: hosting,
+    appFee,
+    total,
+    renewalNote:
+      'Keep paying your domain renewal at your current registrar. We host and secure the ' +
+      'site; you continue to own the domain. If the domain lapses the site goes offline.',
+  };
+}
+
 // ---- Connect a domain the client ALREADY owns -----------------------------------
 // Most prospects own a domain and a bad site, so this — not registration — is the path
 // that closes deals. We move nameservers rather than editing records: one setting, covers
@@ -315,6 +340,7 @@ app.post('/api/domain/inspect', async (req, res) => {
     res.json({
       domain,
       registrar: info.registrar || null,
+      quote: ownDomainQuote(domain),
       walkthroughKey: info.walkthroughKey || 'generic',
       currentNameservers: info.nameservers || [],
       alreadyOnCloudflare: (info.nameservers || []).some((n) => /cloudflare/i.test(n)),
@@ -380,7 +406,18 @@ app.get('/api/domain/status', async (req, res) => {
 
 app.post('/api/checkout', async (req, res) => {
   try {
-    const { domain, slug, previewId } = req.body || {};
+    const { domain, slug, previewId, ownDomain } = req.body || {};
+
+    // Bringing their own domain: nothing to register, nothing to look up. The domain being
+    // taken is the whole point, so the availability check must not run here.
+    if (ownDomain) {
+      const d = String(domain || '').toLowerCase();
+      if (!d.includes('.')) return res.status(400).json({ error: 'A domain is required.' });
+      const quote = ownDomainQuote(d);
+      const session = await createCheckout({ quote, slug, previewId });
+      return res.json({ url: session.url, total: quote.total, ownDomain: true });
+    }
+
     const d = String(domain || '').toLowerCase();
     const avail = await checkAvailability(d);
     if (!avail.available) return res.status(400).json({ error: 'domain not available' });
