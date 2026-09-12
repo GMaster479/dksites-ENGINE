@@ -27,6 +27,7 @@ const REGISTRAR_KEYS = [
   [/hostgator/i, 'hostgator'],
   [/ionos|1&1/i, 'ionos'],
   [/porkbun/i, 'porkbun'],
+  [/hostinger/i, 'hostinger'],
 ];
 
 function toWalkthroughKey(registrarName) {

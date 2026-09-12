@@ -111,6 +111,21 @@ export const WALKTHROUGHS = {
       'Choose "Use custom nameservers", enter the two below, and save.',
     ],
   },
+  hostinger: {
+    registrar: 'Hostinger',
+    steps: [
+      'Sign in at hostinger.com and open hPanel.',
+      'Click "Domains" in the top menu, then select your domain.',
+      'In the left sidebar click "DNS / Nameservers".',
+      'Find the "Nameservers" section and click "Change Nameservers".',
+      'Choose "Use custom nameservers" (not "Use Hostinger nameservers").',
+      'Enter the two nameservers below in the first two fields, leave the rest blank, and Save.',
+    ],
+    note:
+      'Hostinger will warn that your existing hosting will stop serving the domain — that is ' +
+      'exactly what we want, since your new site replaces it. If they also host your email, ' +
+      'tell me before you save and I will copy your mail records over first so nothing breaks.',
+  },
   porkbun: {
     registrar: 'Porkbun',
     steps: [
