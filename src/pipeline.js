@@ -27,6 +27,24 @@ export async function runPipeline(query, opts = {}) {
   }
 
   // 2. TRIAGE
+  // If they already have a site, read it for real CONTENT — above all the menu, which
+  // public APIs never carry and which is the most valuable thing on most old sites.
+  if (!dryRun && facts.identity?.website && !facts.knownMenu) {
+    try {
+      const { readExistingSite } = await import('./extract/site-reader.js');
+      log(`Reading their existing site: ${facts.identity.website}`);
+      const site = await readExistingSite(facts.identity.website);
+      if (site) {
+        facts.existingSite = { pages: site.pages, text: site.text.slice(0, 20000) };
+        log(`  read ${site.pages.length} page(s)`);
+        if (site.knownMenu?._itemCount) {
+          facts.knownMenu = site.knownMenu;
+          log(`  pulled a real menu from their site: ${site.knownMenu._itemCount} items`);
+        } else log('  no menu found on their site');
+      } else log('  could not read it');
+    } catch (e) { log(`  site read failed: ${e.message}`); }
+  }
+
   facts = await triage(facts, { vision: !dryRun });
   log(
     `Triage: ${facts.triage.greenfield ? 'GREENFIELD' : 'standard'} · ${facts.triage.usableCount} usable photos` +

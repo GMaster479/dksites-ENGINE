@@ -138,14 +138,14 @@ export async function applyEdit(previewId, change = {}) {
   const facts = structuredClone(build.facts);
   const decisions = structuredClone(build.decisions || {});
   const {
-    instruction = null, menuFilePath = null, setPalette = null, setFonts = null,
+    instruction = null, menuFilePath = null, menuFilePaths = null, setPalette = null, setFonts = null,
     logoFile = null, photoFiles = [],
   } = change;
 
   // 1. Menu file -> knownMenu (the only sanctioned menu source).
   let menuSummary = null;
-  if (menuFilePath) {
-    const menu = await extractMenuFromFile(menuFilePath);
+  if (menuFilePaths?.length || menuFilePath) {
+    const menu = await extractMenuFromFile(menuFilePaths?.length ? menuFilePaths : menuFilePath);
     facts.knownMenu = menu;
     menuSummary = `${menu._itemCount} items across ${(menu.sections || []).length} sections`;
   }
@@ -217,7 +217,7 @@ export async function applyEdit(previewId, change = {}) {
   const preview = await writePreview(facts, decisions, generated, {
     id: previewId,
     // Uploaded files already live in the preview dir, so no re-fetch is needed for them.
-    skipAssets: !menuFilePath && !logoFile && !photoFiles.length,
+    skipAssets: !(menuFilePaths?.length || menuFilePath) && !logoFile && !photoFiles.length,
     editInstruction,
   });
 

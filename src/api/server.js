@@ -248,7 +248,7 @@ app.post('/api/import-image', async (req, res) => {
 });
 
 app.post('/api/apply-edit', async (req, res) => {
-  const { previewId, instruction, slug, logoFile, menuFile, photoFiles, setPalette, setFonts } = req.body || {};
+  const { previewId, instruction, slug, logoFile, menuFile, menuFiles, photoFiles, setPalette, setFonts } = req.body || {};
   if (!previewId) return res.status(400).json({ error: 'previewId required' });
 
   const jobId = createJob(); // apply-edit runs as a background job; poll /api/status/:jobId
@@ -261,6 +261,7 @@ app.post('/api/apply-edit', async (req, res) => {
         instruction: instruction || null,
         logoFile: logoFile || null,
         menuFilePath: menuFile?.path || null,
+        menuFilePaths: Array.isArray(menuFiles) ? menuFiles.map((f) => f.path).filter(Boolean) : null,
         photoFiles: Array.isArray(photoFiles) ? photoFiles : [],
         setPalette: setPalette || null,
         setFonts: setFonts || null,
@@ -298,6 +299,85 @@ app.get('/api/check', async (req, res) => {
 });
 
 // ---- Create Stripe Checkout (margin guard: refuse estimated prices) ----
+// ---- Connect a domain the client ALREADY owns -----------------------------------
+// Most prospects own a domain and a bad site, so this — not registration — is the path
+// that closes deals. We move nameservers rather than editing records: one setting, covers
+// apex and www together, and it hands us DNS control so SSL and later changes are ours.
+
+// Who is it registered with, and what will the owner have to do?
+app.post('/api/domain/inspect', async (req, res) => {
+  try {
+    const domain = String(req.body?.domain || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+    if (!domain.includes('.')) return res.status(400).json({ error: 'That does not look like a domain name.' });
+    const { detectRegistrar } = await import('../extract/whois.js');
+    const { getWalkthrough } = await import('../launch/walkthroughs.js');
+    const info = await detectRegistrar(`https://${domain}`);
+    res.json({
+      domain,
+      registrar: info.registrar || null,
+      walkthroughKey: info.walkthroughKey || 'generic',
+      currentNameservers: info.nameservers || [],
+      alreadyOnCloudflare: (info.nameservers || []).some((n) => /cloudflare/i.test(n)),
+      walkthrough: getWalkthrough(info.walkthroughKey, []),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Prepare our side: deploy the site, map the routes, create the zone. Returns the exact
+// nameservers the owner must enter. Nothing here touches their domain.
+app.post('/api/domain/connect', async (req, res) => {
+  try {
+    const { previewId, slug } = req.body || {};
+    const domain = String(req.body?.domain || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+    if (!domain.includes('.') || !previewId || !slug) {
+      return res.status(400).json({ error: 'domain, previewId and slug are all required.' });
+    }
+    const { join } = await import('node:path');
+    const { mapCustomDomain } = await import('../deploy/r2.js');
+    const { attachDomainToWorker } = await import('../launch/cloudflare.js');
+    const { detectRegistrar } = await import('../extract/whois.js');
+    const { getWalkthrough } = await import('../launch/walkthroughs.js');
+
+    // Site first, so the moment DNS resolves there is already a real site waiting.
+    await deployPreview(join(config.previewDir, previewId), slug);
+    await mapCustomDomain(domain, slug);
+    await mapCustomDomain(`www.${domain}`, slug);
+
+    const cf = await attachDomainToWorker(domain);
+    const info = await detectRegistrar(`https://${domain}`);
+    res.json({
+      domain,
+      zoneId: cf.zone.id,
+      zoneStatus: cf.zone.status,
+      nameservers: cf.zone.nameServers,
+      walkthrough: getWalkthrough(info.walkthroughKey, cf.zone.nameServers),
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Has the nameserver change landed yet? Polled by the app while the owner waits.
+app.get('/api/domain/status', async (req, res) => {
+  try {
+    const domain = String(req.query.domain || '').toLowerCase();
+    const zoneId = String(req.query.zoneId || '');
+    if (!zoneId) return res.status(400).json({ error: 'zoneId required' });
+    const { getZone } = await import('../launch/cloudflare.js');
+    const zone = await getZone(zoneId);
+    let serving = false;
+    try {
+      const r = await fetch(`https://${domain}/`, { redirect: 'follow', signal: AbortSignal.timeout(8000) });
+      serving = r.ok;
+    } catch {}
+    res.json({
+      domain,
+      zoneStatus: zone.status,           // 'pending' until Cloudflare sees the new NS
+      active: zone.status === 'active',
+      serving,
+      ssl: zone.status === 'active' ? 'issued' : 'pending',
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/api/checkout', async (req, res) => {
   try {
     const { domain, slug, previewId } = req.body || {};

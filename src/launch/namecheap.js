@@ -145,5 +145,11 @@ export async function setNameservers(domain, nameservers = []) {
   const $ = cheerio.load(normalize(xml), { xmlMode: true });
   ensureOk($, 'domains.dns.setCustom');
   const r = $('DomainDNSSetCustomResult').first();
-  return { domain, updated: (r.attr('Update') || '').toLowerCase() === 'true', nameservers };
+  // Namecheap reports success inconsistently here: sometimes Update="true", sometimes a
+  // different attribute, sometimes none at all while having applied the change perfectly.
+  // ensureOk() above already threw on a real API error, so reaching this line means it
+  // worked. Treating a missing attribute as failure is what aborted a launch mid-sequence
+  // on a domain that had already been paid for.
+  const flag = (r.attr('Update') || r.attr('Updated') || r.attr('IsSuccess') || '').toLowerCase();
+  return { domain, updated: flag ? flag === 'true' : true, nameservers, reportedFlag: flag || null };
 }
