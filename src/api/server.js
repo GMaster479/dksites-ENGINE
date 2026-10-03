@@ -43,14 +43,27 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), (req, res) =
   if (event.type === 'checkout.session.completed') {
     const m = event.data.object.metadata || {};
     console.log(`\n💸 Payment complete: ${m.domain} — $${(event.data.object.amount_total / 100).toFixed(2)}`);
-    runLaunch({ domain: m.domain, slug: m.slug, previewId: m.previewId, price: m.domainPrice, years: parseInt(m.years || '1', 10) })
-      .catch((e) => console.error('✗ Launch error:', e.message));
+    import('./accounts.js')
+      .then((a) => a.recordPurchase(event.data.object))
+      .catch((e) => console.error('✗ Recording purchase:', e.message));
+    if (m.ownDomain === 'true') {
+      // They already own this domain: nothing to register. The connect flow in the app
+      // deploys the site and walks them through pointing their nameservers.
+      console.log(`   own domain ${m.domain} — no registration; connect flow handles DNS`);
+    } else {
+      runLaunch({ domain: m.domain, slug: m.slug, previewId: m.previewId, price: m.domainPrice, years: parseInt(m.years || '1', 10) })
+        .catch((e) => console.error('✗ Launch error:', e.message));
+    }
   }
 });
 
 // ---- Everything else: JSON + CORS locked to the app, plus a health check ----
-app.use(cors({ origin: ORIGIN }));
+app.use(cors({ origin: ORIGIN, credentials: true })); // session cookie
 app.use(express.json({ limit: '24mb' }));
+
+// ---- Accounts: sessions, sign-in, ownership guards, checkout gate, dashboard, admin ----
+const { mountAccounts, checkoutExtras } = await import('./accounts.js');
+mountAccounts(app);
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Rate limit the money-costing path (generation). Anonymous is fine; this just stops abuse.
@@ -414,7 +427,7 @@ app.post('/api/checkout', async (req, res) => {
       const d = String(domain || '').toLowerCase();
       if (!d.includes('.')) return res.status(400).json({ error: 'A domain is required.' });
       const quote = ownDomainQuote(d);
-      const session = await createCheckout({ quote, slug, previewId });
+      const session = await createCheckout({ quote, slug, previewId, ...checkoutExtras(req) });
       return res.json({ url: session.url, total: quote.total, ownDomain: true });
     }
 
@@ -424,7 +437,7 @@ app.post('/api/checkout', async (req, res) => {
     const info = avail.premium ? { price: avail.premiumPrice, years: 1, estimated: false } : await getRegisterPrice(tldOf(d));
     if (info.estimated) return res.status(409).json({ error: 'price not verified; refusing checkout' });
     const quote = buildQuote(info.price, { domain: d, years: info.years, verified: true });
-    const session = await createCheckout({ quote, slug, previewId });
+    const session = await createCheckout({ quote, slug, previewId, ...checkoutExtras(req) });
     res.json({ url: session.url, total: quote.total });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

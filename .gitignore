@@ -9,3 +9,4 @@ registrant.json
 .wrangler/
 *.tar.gz
 menu.pdf
+db/

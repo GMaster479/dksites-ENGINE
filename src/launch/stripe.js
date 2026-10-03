@@ -14,7 +14,7 @@ export function stripeClient() {
  * Build a Checkout Session from a quote. Each quote line becomes a Stripe line item so the
  * customer sees the exact itemization (domain / hosting / service fee).
  */
-export async function createCheckout({ quote, slug, previewId, successUrl, cancelUrl }) {
+export async function createCheckout({ quote, slug, previewId, successUrl, cancelUrl, userId = null, email = null, autoRenew = false, ownDomain = false }) {
   const stripe = stripeClient();
 
   const line_items = quote.lineItems.map((li) => ({
@@ -28,10 +28,15 @@ export async function createCheckout({ quote, slug, previewId, successUrl, cance
 
   const session = await stripe.checkout.sessions.create({
     mode: 'payment',
-    payment_method_types: ['card', 'cashapp', 'link'],
+    // Auto-renew is OPT-IN. Only then do we save the card for next year — and Cash App
+    // can't be charged later, so it's offered only on one-time purchases.
+    payment_method_types: autoRenew ? ['card', 'link'] : ['card', 'cashapp', 'link'],
+    customer_creation: 'always',
+    ...(email ? { customer_email: email } : {}),
+    ...(autoRenew ? { payment_intent_data: { setup_future_usage: 'off_session' } } : {}),
     line_items,
-    success_url: successUrl || 'http://localhost:8787/launch/success?session_id={CHECKOUT_SESSION_ID}',
-    cancel_url: cancelUrl || 'http://localhost:8787/launch/cancel',
+    success_url: successUrl || 'https://app.dksites.com/?checkout=success&session_id={CHECKOUT_SESSION_ID}',
+    cancel_url: cancelUrl || 'https://app.dksites.com/?checkout=cancel',
     // The webhook reads this to know WHAT to provision after payment.
     metadata: {
       domain: quote.domain || '',
@@ -40,6 +45,9 @@ export async function createCheckout({ quote, slug, previewId, successUrl, cance
       total: String(quote.total),
       years: String(quote.domainYears || 1),
       domainPrice: String(quote.lineItems.find((l) => l.key === 'domain')?.amount ?? ''),
+      userId: userId ? String(userId) : '',
+      autoRenew: autoRenew ? 'true' : 'false',
+      ownDomain: ownDomain ? 'true' : 'false',
     },
   });
 
