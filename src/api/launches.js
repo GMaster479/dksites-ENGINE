@@ -1,7 +1,7 @@
 import { getDb, now } from './db.js';
 import { runLaunch, LAUNCH_STEPS } from '../launch/launch.js';
 import { sendEmail, layout, button, esc } from './mailer.js';
-import { requireUser, requireAdmin, isAdmin, adminEmails } from './accounts.js';
+import { requireUser, requireAdmin, isAdmin, adminEmails, recordPurchase } from './accounts.js';
 import { config } from '../config.js';
 
 // LAUNCH PROGRESS
@@ -162,6 +162,40 @@ function publicLaunch(site) {
   };
 }
 
+// ---- Don't depend on the webhook alone ------------------------------------------
+// If Stripe's webhook is late, misconfigured, or never arrives, a paid customer would sit
+// on "Confirming payment" forever and never appear on their dashboard. So when the app
+// asks about a checkout we haven't recorded, we ask Stripe directly. Recording is
+// idempotent (keyed on the checkout id) and the launch start is guarded, so the webhook
+// and this path can both fire without double-launching or double-buying a domain.
+const lastStripeCheck = new Map(); // sessionId -> ms (don't hit Stripe on every 2s poll)
+
+let stripeOverride = null; // tests only
+export const __setStripeForTests = (s) => { stripeOverride = s; };
+async function stripe() {
+  if (stripeOverride) return stripeOverride;
+  const { stripeClient } = await import('../launch/stripe.js');
+  return stripeClient();
+}
+
+export async function fulfillFromStripe(sessionId, { user = null, launch = true } = {}) {
+  const t = lastStripeCheck.get(sessionId) || 0;
+  if (Date.now() - t < 5000) return null;
+  lastStripeCheck.set(sessionId, Date.now());
+  if (lastStripeCheck.size > 500) lastStripeCheck.clear();
+
+  const session = await (await stripe()).checkout.sessions.retrieve(sessionId);
+  if (session.mode !== 'payment' || session.status !== 'complete' || session.payment_status !== 'paid') return null;
+  const m = session.metadata || {};
+  if (user && String(m.userId) !== String(user.id) && !isAdmin(user)) return null; // not theirs
+  recordPurchase(session);
+  console.log(`💸 Payment confirmed from Stripe directly: ${m.domain} (${sessionId})`);
+  if (launch && m.ownDomain !== 'true') {
+    startLaunchForSession(session).catch((e) => console.error('✗ Launch (direct):', e.message));
+  }
+  return getDb().prepare('SELECT * FROM sites WHERE stripe_session_id = ?').get(sessionId) || null;
+}
+
 export function mountLaunches(app) {
   // A launch can't still be running in a process that just started: the last one was cut
   // off by a restart. Mark it so an admin can see it and press Retry.
@@ -173,18 +207,45 @@ export function mountLaunches(app) {
   }
 
   // Polled by the Launching screen right after Stripe sends them back.
-  app.get('/api/launch/status', requireUser, (req, res) => {
+  app.get('/api/launch/status', requireUser, async (req, res) => {
     const sessionId = String(req.query.session_id || '');
     const siteId = Number(req.query.site_id || 0);
     if (!sessionId && !siteId) return res.status(400).json({ error: 'session_id or site_id required' });
     const db = getDb();
-    const site = sessionId
+    let site = sessionId
       ? db.prepare('SELECT * FROM sites WHERE stripe_session_id = ?').get(sessionId)
       : db.prepare('SELECT * FROM sites WHERE id = ?').get(siteId);
+    if (!site && sessionId.startsWith('cs_')) {
+      try { site = await fulfillFromStripe(sessionId, { user: req.user }); }
+      catch (e) { console.error('✗ Stripe lookup:', e.message); }
+    }
     // Stripe's webhook usually lands within a second or two of the redirect, but not always first.
     if (!site) return res.json({ status: 'confirming_payment', steps: freshSteps(null).map((s) => ({ ...s, state: 'pending' })) });
     if (site.user_id !== req.user.id && !isAdmin(req.user)) return res.status(403).json({ error: 'Not your site.' });
     res.json(publicLaunch(site));
+  });
+
+  // Admin: record any paid checkouts from the last 30 days that never reached us. Records
+  // only — it does NOT launch (that could buy domains). Each one shows up with a Retry button.
+  app.post('/api/admin/sync-stripe', requireUser, requireAdmin, async (_req, res) => {
+    try {
+      const s = await stripe();
+      const since = Math.floor(Date.now() / 1000) - 30 * 86400;
+      const db = getDb();
+      const found = [];
+      for await (const cs of s.checkout.sessions.list({ created: { gte: since }, status: 'complete', limit: 100 })) {
+        if (cs.mode !== 'payment' || cs.payment_status !== 'paid') continue;
+        if (db.prepare('SELECT 1 FROM sites WHERE stripe_session_id = ?').get(cs.id)) continue;
+        recordPurchase(cs);
+        const own = cs.metadata?.ownDomain === 'true';
+        if (!own) {
+          db.prepare("UPDATE sites SET launch_status = 'error', launch_error = ? WHERE stripe_session_id = ?")
+            .run('Paid, but the launch never started (found by Stripe sync). Press Retry to launch — this registers the domain.', cs.id);
+        }
+        found.push({ domain: cs.metadata?.domain || null, amount: cs.amount_total / 100, own });
+      }
+      res.json({ recorded: found.length, found });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   });
 
   // Admin: re-run a failed / stuck launch. Never re-buys a registered domain.
