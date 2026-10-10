@@ -319,6 +319,8 @@ export function mountAccounts(app) {
         status: s.status, amount: s.amount_cents != null ? s.amount_cents / 100 : null,
         autoRenew: !!s.auto_renew, paidAt: s.paid_at, renewsAt: s.renews_at,
         canManageBilling: !!s.stripe_customer_id,
+        // Customers see "launching" / "being checked", never the raw error text.
+        launchStatus: s.own_domain ? 'own_domain' : s.launch_status || 'starting',
       })),
     });
   });
@@ -365,6 +367,9 @@ export function mountAccounts(app) {
         id: s.id, email: s.email, domain: s.domain, slug: s.slug, ownDomain: !!s.own_domain, status: s.status,
         amount: s.amount_cents != null ? s.amount_cents / 100 : null, autoRenew: !!s.auto_renew,
         paidAt: s.paid_at, renewsAt: s.renews_at, reminder30At: s.reminder30_at, reminder7At: s.reminder7_at,
+        launchStatus: s.own_domain ? 'own_domain' : s.launch_status || 'starting',
+        launchError: s.launch_error || null, registeredAt: s.registered_at || null,
+        zoneId: s.zone_id || null, autoRenewChangedAt: s.auto_renew_changed_at || null,
       })),
       builds: builds.map((b) => ({ previewId: b.preview_id, email: b.email, name: b.name, slug: b.slug, previewUrl: b.preview_url, claimedAt: b.claimed_at })),
     });

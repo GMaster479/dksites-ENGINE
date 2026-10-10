@@ -129,27 +129,85 @@ export async function registerDomain(domain, years = 1) {
   };
 }
 
-/**
- * Point a domain we just registered at Cloudflare's nameservers. This is the step that
- * actually makes the site reachable — without it the domain is registered but resolves
- * to Namecheap's parking page.
- */
-export async function setNameservers(domain, nameservers = []) {
-  if (!nameservers.length) throw new Error('No nameservers to set.');
-  const [sld, ...rest] = domain.split('.');
-  const xml = await call('namecheap.domains.dns.setCustom', {
-    SLD: sld,
-    TLD: rest.join('.'),
-    Nameservers: nameservers.join(','),
-  });
+// ---- Nameservers: set, then VERIFY by reading them back ----
+//
+// The old check trusted a flag in Namecheap's setCustom response. That flag is unreliable
+// (missing, renamed, or "false" on a change that applied fine), which produced the
+// "Nameservers were not accepted" error on launches that had actually worked. And right
+// after domains.create, setCustom can briefly fail because the new domain isn't fully
+// provisioned yet. So now we: retry the set a few times, then read the nameservers back
+// with domains.dns.getList and compare. What Namecheap REPORTS it has is the truth.
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const normNs = (list) => [...new Set((list || []).map((n) => String(n).trim().toLowerCase().replace(/\.$/, '')).filter(Boolean))].sort();
+
+/** Pure parser for domains.dns.getList. */
+export function parseDnsList(xml) {
   const $ = cheerio.load(normalize(xml), { xmlMode: true });
-  ensureOk($, 'domains.dns.setCustom');
-  const r = $('DomainDNSSetCustomResult').first();
-  // Namecheap reports success inconsistently here: sometimes Update="true", sometimes a
-  // different attribute, sometimes none at all while having applied the change perfectly.
-  // ensureOk() above already threw on a real API error, so reaching this line means it
-  // worked. Treating a missing attribute as failure is what aborted a launch mid-sequence
-  // on a domain that had already been paid for.
-  const flag = (r.attr('Update') || r.attr('Updated') || r.attr('IsSuccess') || '').toLowerCase();
-  return { domain, updated: flag ? flag === 'true' : true, nameservers, reportedFlag: flag || null };
+  ensureOk($, 'domains.dns.getList');
+  const r = $('DomainDNSGetListResult').first();
+  const nameservers = [];
+  r.find('Nameserver').each((_, n) => nameservers.push($(n).text()));
+  return {
+    usingNamecheapDns: (r.attr('IsUsingOurDNS') || '').toLowerCase() === 'true',
+    nameservers: normNs(nameservers),
+  };
+}
+
+/** True when every nameserver we asked for is what the registrar now has (order-free). */
+export function nameserversMatch(want, have) {
+  const a = normNs(want), b = normNs(have);
+  return a.length > 0 && a.length === b.length && a.every((n, i) => n === b[i]);
+}
+
+function splitDomain(domain) {
+  const [sld, ...rest] = domain.split('.');
+  return { SLD: sld, TLD: rest.join('.') };
+}
+
+export async function getNameservers(domain) {
+  const xml = await call('namecheap.domains.dns.getList', splitDomain(domain));
+  return parseDnsList(xml);
+}
+
+/**
+ * Point a domain at Cloudflare's nameservers and confirm it took.
+ * Returns { updated, verified, nameservers, current, attempts, lastError }.
+ *   verified: true  -> Namecheap reports exactly our nameservers. Done.
+ *   verified: false -> could not confirm. The caller flags it for a human; it is NOT
+ *                      treated as a failed launch (the domain is already paid for).
+ */
+export async function setNameservers(domain, nameservers = [], { attempts = 4, waitMs = 8000 } = {}) {
+  if (!nameservers.length) throw new Error('No nameservers to set.');
+  let lastError = null;
+  let current = [];
+
+  for (let i = 1; i <= attempts; i++) {
+    // Already pointed (e.g. a retried launch, or an earlier attempt that "failed" but applied)?
+    try {
+      const now = await getNameservers(domain);
+      current = now.nameservers;
+      if (nameserversMatch(nameservers, current)) {
+        return { domain, updated: true, verified: true, nameservers, current, attempts: i, lastError };
+      }
+    } catch (e) { lastError = e.message; }
+
+    try {
+      const xml = await call('namecheap.domains.dns.setCustom', { ...splitDomain(domain), Nameservers: nameservers.join(',') });
+      const $ = cheerio.load(normalize(xml), { xmlMode: true });
+      ensureOk($, 'domains.dns.setCustom');
+    } catch (e) { lastError = e.message; }
+
+    // Read back. Namecheap applies setCustom synchronously when it accepts it.
+    try {
+      const after = await getNameservers(domain);
+      current = after.nameservers;
+      if (nameserversMatch(nameservers, current)) {
+        return { domain, updated: true, verified: true, nameservers, current, attempts: i, lastError: null };
+      }
+    } catch (e) { lastError = e.message; }
+
+    if (i < attempts) await sleep(waitMs * i); // 8s, 16s, 24s — new registrations settle fast
+  }
+  return { domain, updated: false, verified: false, nameservers, current, attempts, lastError };
 }

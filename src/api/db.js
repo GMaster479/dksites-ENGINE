@@ -10,7 +10,9 @@ import { dirname } from 'node:path';
 //   login_tokens  — single-use magic-link tokens (stored HASHED, 15 minute life)
 //   sessions      — signed-in browsers (stored HASHED, 30 day life)
 //   builds        — previews someone has claimed; unclaimed previews stay anonymous
-//   sites         — paid launches: what they bought, when it renews, auto-renew opt-in
+//   sites         — paid launches: what they bought, when it renews, auto-renew opt-in,
+//                   and live launch progress
+//   meta          — small key/value facts (last backup)
 
 const DB_PATH = process.env.DB_PATH || './db/dksites.sqlite';
 
@@ -81,9 +83,47 @@ export function getDb() {
     CREATE INDEX IF NOT EXISTS idx_builds_user ON builds(user_id);
     CREATE INDEX IF NOT EXISTS idx_sites_user  ON sites(user_id);
     CREATE INDEX IF NOT EXISTS idx_sites_renew ON sites(renews_at);
+
+    -- Small key/value store (last backup time, etc.)
+    CREATE TABLE IF NOT EXISTS meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    );
   `);
+  migrate(db);
   return db;
 }
+
+// Columns added after the first release. SQLite has no "ADD COLUMN IF NOT EXISTS", so
+// check what's there and add only what's missing. Safe to run on every boot.
+const SITE_COLUMNS = {
+  launch_status:         'TEXT',    // starting | running | done | needs_attention | error
+  launch_steps:          'TEXT',    // JSON [{ key, label, state, detail }]
+  launch_error:          'TEXT',
+  launch_updated_at:     'INTEGER',
+  zone_id:               'TEXT',
+  nameservers:           'TEXT',    // JSON array
+  registered_at:         'INTEGER', // set once the domain is bought — a retry must never buy it twice
+  auto_renew_changed_at: 'INTEGER',
+  renew_payment_method:  'TEXT',    // Stripe payment method saved for next year's renewal
+};
+
+function migrate(d) {
+  const have = new Set(d.prepare('PRAGMA table_info(sites)').all().map((c) => c.name));
+  for (const [col, type] of Object.entries(SITE_COLUMNS)) {
+    if (!have.has(col)) d.exec(`ALTER TABLE sites ADD COLUMN ${col} ${type}`);
+  }
+}
+
+export function getMeta(key) {
+  return getDb().prepare('SELECT value FROM meta WHERE key = ?').get(key)?.value ?? null;
+}
+export function setMeta(key, value) {
+  getDb().prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, value == null ? null : String(value));
+}
+
+export const dbPath = () => DB_PATH;
 
 export const now = () => Date.now();
 export const DAY = 24 * 60 * 60 * 1000;

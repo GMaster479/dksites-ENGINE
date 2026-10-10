@@ -41,19 +41,40 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), (req, res) =
   }
   res.json({ received: true });
   if (event.type === 'checkout.session.completed') {
-    const m = event.data.object.metadata || {};
-    console.log(`\n💸 Payment complete: ${m.domain} — $${(event.data.object.amount_total / 100).toFixed(2)}`);
-    import('./accounts.js')
-      .then((a) => a.recordPurchase(event.data.object))
-      .catch((e) => console.error('✗ Recording purchase:', e.message));
-    if (m.ownDomain === 'true') {
-      // They already own this domain: nothing to register. The connect flow in the app
-      // deploys the site and walks them through pointing their nameservers.
-      console.log(`   own domain ${m.domain} — no registration; connect flow handles DNS`);
-    } else {
-      runLaunch({ domain: m.domain, slug: m.slug, previewId: m.previewId, price: m.domainPrice, years: parseInt(m.years || '1', 10) })
-        .catch((e) => console.error('✗ Launch error:', e.message));
+    const session = event.data.object;
+    // "Save a card for auto-renew" (dashboard switch): not a purchase, nothing to launch.
+    if (session.mode === 'setup') {
+      import('./autorenew.js')
+        .then((a) => a.handleSetupSession(session))
+        .catch((e) => console.error('✗ Auto-renew setup:', e.message));
+      return;
     }
+    const m = session.metadata || {};
+    console.log(`\n💸 Payment complete: ${m.domain} — $${(session.amount_total / 100).toFixed(2)}`);
+    // Record FIRST, then launch: the launch writes its progress onto the site row that
+    // recordPurchase creates, and the app's Launching screen reads it from there.
+    let launchStarted = false;
+    import('./accounts.js')
+      .then((a) => a.recordPurchase(session))
+      .then(async () => {
+        if (m.ownDomain === 'true') {
+          // They already own this domain: nothing to register. The connect flow in the app
+          // deploys the site and walks them through pointing their nameservers.
+          console.log(`   own domain ${m.domain} — no registration; connect flow handles DNS`);
+          return;
+        }
+        launchStarted = true;
+        const { startLaunchForSession } = await import('./launches.js');
+        await startLaunchForSession(session);
+      })
+      .catch((e) => {
+        console.error('✗ Purchase/launch:', e.message);
+        // If recording failed, still launch what they paid for (old behavior, no progress).
+        if (!launchStarted && m.ownDomain !== 'true') {
+          runLaunch({ domain: m.domain, slug: m.slug, previewId: m.previewId, price: m.domainPrice, years: parseInt(m.years || '1', 10) })
+            .catch((e2) => console.error('✗ Launch error:', e2.message));
+        }
+      });
   }
 });
 
@@ -64,6 +85,10 @@ app.use(express.json({ limit: '24mb' }));
 // ---- Accounts: sessions, sign-in, ownership guards, checkout gate, dashboard, admin ----
 const { mountAccounts, checkoutExtras } = await import('./accounts.js');
 mountAccounts(app);
+// ---- Oct 10: launch progress, auto-renew switch, nightly DB backups ----
+(await import('./launches.js')).mountLaunches(app);
+(await import('./autorenew.js')).mountAutoRenew(app);
+(await import('./backup.js')).mountBackups(app);
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Rate limit the money-costing path (generation). Anonymous is fine; this just stops abuse.
