@@ -16,7 +16,9 @@ export async function screenshotPreview(previewDir, indexPath = 'index.html') {
   }
 
   const fileUrl = 'file://' + join(process.cwd(), previewDir, indexPath);
-  const browser = await chromium.launch();
+  // QA_CHROME_PATH: use an installed Chrome when Playwright can't download its own build
+  // for this OS (the box runs Ubuntu 26.04, which Playwright doesn't support yet).
+  const browser = await chromium.launch(process.env.QA_CHROME_PATH ? { executablePath: process.env.QA_CHROME_PATH } : {});
   const shots = [];
   try {
     for (const w of TEST_WIDTHS) {
