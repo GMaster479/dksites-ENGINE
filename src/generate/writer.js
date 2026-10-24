@@ -16,7 +16,7 @@ import { BRIDGE_JS, injectBridge } from './bridge-script.js';
  * @param {object} opts        { id, skipAssets, editInstruction }
  */
 export async function writePreview(facts, decisions, generated, opts = {}) {
-  const { id = randomUUID(), skipAssets = false, editInstruction = null } = opts;
+  const { id = randomUUID(), skipAssets = false, editInstruction = null, extra = {} } = opts;
   const dir = join(config.previewDir, id);
   await mkdir(dir, { recursive: true });
 
@@ -50,7 +50,11 @@ export async function writePreview(facts, decisions, generated, opts = {}) {
 
   await writeFile(
     buildPath,
-    JSON.stringify({ version, history, facts, decisions, generated, assets }, null, 2)
+    JSON.stringify({
+      version, history, facts, decisions, generated, assets,
+      // The owner's standing requests survive every write unless the caller replaces them.
+      ownerRequests: extra.ownerRequests ?? prior?.ownerRequests ?? [],
+    }, null, 2)
   );
 
   // Debug contact sheet: every downloaded photo next to the label vision gave it.

@@ -89,6 +89,8 @@ mountAccounts(app);
 (await import('./launches.js')).mountLaunches(app);
 (await import('./autorenew.js')).mountAutoRenew(app);
 (await import('./backup.js')).mountBackups(app);
+// ---- Oct 24: preview id validation, upload limit, delete preview, social lookup ----
+(await import('./builds.js')).mountBuilds(app);
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Rate limit the money-costing path (generation). Anonymous is fine; this just stops abuse.
@@ -169,6 +171,26 @@ app.post('/api/generate', genLimiter, async (req, res) => {
       // (If only a name arrived with no facts, the pipeline falls back to extraction.)
 
       updateJob(jobId, { stage: 'Designing your site…', progress: 0.35 });
+      // Oct 24: starting uploads + social profiles. The draft folder is where the app put the
+      // owner's logo/photos before the build; build into it so they're already in place.
+      const draftId = typeof req.body?.draftId === 'string' ? req.body.draftId : null;
+      if (draftId) {
+        const { getDb } = await import('./db.js');
+        const owner = getDb().prepare('SELECT user_id FROM builds WHERE preview_id = ?').get(draftId);
+        if (!owner || (req.user && owner.user_id === req.user.id)) {
+          opts.previewId = draftId;
+          opts.uploads = (Array.isArray(req.body?.uploads) ? req.body.uploads : [])
+            .filter((u) => u && ['logo', 'photo'].includes(u.kind) && /^(images|uploads)\/[\w.-]+$/.test(String(u.assetPath || '')))
+            .slice(0, 12)
+            .map((u) => ({
+              kind: u.kind,
+              assetPath: u.assetPath,
+              path: `${config.previewDir}/${draftId}/${u.assetPath}`, // built here, never trusted from the client
+              note: typeof u.note === 'string' ? u.note.slice(0, 120) : null,
+            }));
+        }
+      }
+      if (Array.isArray(req.body?.socials)) opts.socials = req.body.socials.slice(0, 10).map(String);
       const result = await runPipeline(bizName || description, opts);
 
       updateJob(jobId, { stage: 'Publishing your live preview…', progress: 0.85 });
@@ -286,7 +308,7 @@ app.post('/api/import-image', async (req, res) => {
 });
 
 app.post('/api/apply-edit', async (req, res) => {
-  const { previewId, instruction, slug, logoFile, menuFile, menuFiles, photoFiles, setPalette, setFonts } = req.body || {};
+  const { previewId, instruction, instructions, slug, logoFile, menuFile, menuFiles, photoFiles, setPalette, setFonts, setSocials, removeRequestId, redesign } = req.body || {};
   if (!previewId) return res.status(400).json({ error: 'previewId required' });
 
   const jobId = createJob(); // apply-edit runs as a background job; poll /api/status/:jobId
@@ -294,8 +316,8 @@ app.post('/api/apply-edit', async (req, res) => {
 
   (async () => {
     try {
-      updateJob(jobId, { status: 'running', stage: 'Rebuilding your site…', progress: 0.2 });
-      const { preview, editInstruction } = await applyEdit(previewId, {
+      updateJob(jobId, { status: 'running', stage: redesign ? 'Designing a fresh version of your site…' : 'Making your change…', progress: 0.2 });
+      const { preview, editInstruction, summary, ownerRequests, redesign: wasRedesign } = await applyEdit(previewId, {
         instruction: instruction || null,
         logoFile: logoFile || null,
         menuFilePath: menuFile?.path || null,
@@ -303,6 +325,10 @@ app.post('/api/apply-edit', async (req, res) => {
         photoFiles: Array.isArray(photoFiles) ? photoFiles : [],
         setPalette: setPalette || null,
         setFonts: setFonts || null,
+        instructions: Array.isArray(instructions) ? instructions.slice(0, 12).map(String) : [],
+        setSocials: Array.isArray(setSocials) ? setSocials.slice(0, 10).map(String) : null,
+        removeRequestId: typeof removeRequestId === 'string' ? removeRequestId : null,
+        redesign: redesign === true,
       });
 
       let liveUrl = preview.url;
@@ -315,7 +341,7 @@ app.post('/api/apply-edit', async (req, res) => {
 
       updateJob(jobId, {
         status: 'done', stage: 'Your changes are live', progress: 1,
-        result: { version: preview.version, url: liveUrl, applied: editInstruction },
+        result: { version: preview.version, url: liveUrl, applied: editInstruction, summary, ownerRequests, redesign: wasRedesign },
       });
     } catch (e) {
       updateJob(jobId, { status: 'error', error: e.message });

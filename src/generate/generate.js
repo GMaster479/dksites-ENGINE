@@ -32,9 +32,12 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
   // Asset manifest = LOCAL relative paths only. The writer downloads sources to these paths.
   // Captions come from the vision pass, so the generator can match each image to the
   // section it actually belongs in instead of distributing them blindly.
+  // photo-N numbering is by position in the full list (the writer downloads by the same
+  // index), so filter by position instead of slicing — uploads past #10 stay available.
   const photos = (facts.triage?.rankedPhotos || facts.assets.photos || [])
-    .slice(0, 10)
-    .map((p, i) => ({
+    .map((p, i) => ({ p, i }))
+    .filter(({ p, i }) => i < 10 || p.assetPath)
+    .map(({ p, i }) => ({
       path: p.assetPath || `images/photo-${i + 1}.webp`,
       ...(p.assetPath ? { ownerUploaded: true } : {}),
       heroGrade: !!p.heroGrade,

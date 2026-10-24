@@ -27,6 +27,10 @@ placeholder hours, AND invented menu items). You do the opposite.
 - **Full SEO layer on every page**: SEO-renamed asset files, JSON-LD (LocalBusiness +
   the most specific subtype that fits `primaryType`), Open Graph image + tags, complete
   favicon set, a real meta description written for this business.
+- **Social profiles.** When `business.sameAs` lists profile URLs, put that exact list in
+  the JSON-LD `sameAs` array AND show each as an icon link (inline SVG, `aria-label` with
+  the platform name, `rel="noopener"`) in the footer and wherever the site shows contact
+  info. Never invent a profile URL; with no list, omit `sameAs` and the icons.
 - **Mobile-first.** Design at 325px first, then scale up. Test points: 325 / 375 / 768 /
   1080 / 1440 / 1920. Layouts are max-width contained so ultrawide gets graceful gutters,
   never stretched. The hamburger nav must actually open and close.

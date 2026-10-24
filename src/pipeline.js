@@ -14,11 +14,17 @@ const log = (...a) => console.log('›', ...a);
  * @param {object} opts   { dryRun, factsFile, skipQA }
  */
 export async function runPipeline(query, opts = {}) {
-  const { dryRun = false, factsFile = null, skipQA = false } = opts;
+  const { dryRun = false, factsFile = null, skipQA = false, previewId = null, uploads = [], socials = null } = opts;
 
   // 1. EXTRACT (or load fixture for offline dry runs)
+  // opts.facts = the business the owner CONFIRMED in the app (or the greenfield shell for
+  // description-only builds). Use it as-is: re-extracting by name could resolve to a
+  // different business, and a description is not a searchable business name.
   let facts;
-  if (factsFile) {
+  if (opts.facts) {
+    log(`Using confirmed facts for: ${opts.facts.identity?.name || '(description build)'}`);
+    facts = structuredClone(opts.facts);
+  } else if (factsFile) {
     log(`Loading facts fixture: ${factsFile}`);
     facts = JSON.parse(await readFile(factsFile, 'utf8'));
   } else {
@@ -45,7 +51,49 @@ export async function runPipeline(query, opts = {}) {
     } catch (e) { log(`  site read failed: ${e.message}`); }
   }
 
+  // Social profiles the owner confirmed -> footer links + JSON-LD sameAs.
+  if (Array.isArray(socials)) {
+    const { cleanSocials } = await import('./edit/edit.js');
+    facts.identity = { ...facts.identity, sameAs: cleanSocials(socials) };
+    if (facts.identity.sameAs.length) log(`Social profiles: ${facts.identity.sameAs.join(', ')}`);
+  }
+
+  // Owner uploads from the start of the build (logo, outside/inside shots). They already
+  // sit in this preview's folder, so they're never downloaded. The logo anchors the palette.
+  const logoUp = uploads.find((u) => u.kind === 'logo' && u.path);
+  if (logoUp) {
+    facts.assets = { ...facts.assets, logo: logoUp.path, logoAssetPath: logoUp.assetPath, logoUploaded: true };
+    log(`Owner logo: ${logoUp.assetPath}`);
+  }
+
   facts = await triage(facts, { vision: !dryRun });
+
+  const photoUps = uploads.filter((u) => u.kind === 'photo' && u.path);
+  if (photoUps.length && !dryRun) {
+    const added = photoUps.map((u) => ({
+      url: null, assetPath: u.assetPath, path: u.path, source: 'upload', score: 7, heroGrade: true,
+      ...(u.note ? { ownerNote: u.note, caption: u.note } : {}),
+    }));
+    try {
+      const { describePhotos } = await import('./analyze/vision.js');
+      const seen = await describePhotos(added.map((a) => ({ ...a, url: a.path })), {
+        name: facts.identity?.name || null,
+        type: facts.atmosphere?.primaryTypeDisplayName || null,
+        summary: facts.atmosphere?.editorialSummary || null,
+      });
+      for (const label of seen?.photos || []) {
+        const t = added[Number(label.i) - 1];
+        if (!t) continue;
+        // The owner's own label ("outside", "inside") wins; vision adds detail to it.
+        t.caption = t.ownerNote ? `${t.ownerNote} — ${label.caption || ''}`.replace(/ — $/, '') : (label.caption || null);
+        t.kind = label.kind || null;
+        if (label.activity && (label.confidence ?? 1) >= 0.6) t.activity = label.activity;
+      }
+    } catch { /* unlabeled uploads still get used */ }
+    // Owner photos go FIRST: they're the real place, so they're the best hero candidates.
+    facts.triage = { ...facts.triage, rankedPhotos: [...added, ...(facts.triage.rankedPhotos || [])] };
+    log(`Owner photos: ${added.length}`);
+  }
   log(
     `Triage: ${facts.triage.greenfield ? 'GREENFIELD' : 'standard'} · ${facts.triage.usableCount} usable photos` +
       (facts.triage.labeled ? ' · photos labeled by vision' : '')
@@ -81,7 +129,7 @@ export async function runPipeline(query, opts = {}) {
   log(`Generated ${generated.files.length} files · signature: ${generated.signature_element}`);
 
   // 5. WRITE + download assets
-  const preview = await writePreview(facts, decisions, generated);
+  const preview = await writePreview(facts, decisions, generated, previewId ? { id: previewId } : {});
   log(`Preview written: ${preview.dir}`);
   log(`Preview URL: ${preview.url}`);
 

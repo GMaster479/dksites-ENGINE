@@ -106,7 +106,16 @@ Respond with ONLY this JSON, no prose, no fences:
 
   return {
     previewId: undefined, // set by caller
-    palette: { current: decisions?.palette || null, alternates: ai.paletteAlternates || [] },
+    palette: {
+      current: decisions?.palette || null,
+      // An uploaded logo's colors are offered here, never applied without asking.
+      alternates: [
+        ...(decisions?.logoPalette?.dominant
+          ? [{ label: 'Match my logo', dominant: decisions.logoPalette.dominant, accent: decisions.logoPalette.accent }]
+          : []),
+        ...(ai.paletteAlternates || []),
+      ],
+    },
     fonts: { current: decisions?.typography || null, alternates: ai.fontAlternates || [] },
     suggestedPrompts,
     examplePrompts: (ai.examplePrompts || [])
@@ -122,25 +131,57 @@ Respond with ONLY this JSON, no prose, no fences:
       photos: (facts.triage?.rankedPhotos || []).length,
       uploadedPhotos: (facts.triage?.rankedPhotos || []).filter((p) => p.assetPath).length,
     },
+    // Everything the owner has asked for so far. Kept through every edit; each can be undone.
+    requests: (build.ownerRequests || []).map((r) => ({ id: r.id, text: r.text, at: r.at, summary: r.summary || null })),
+    socials: facts.identity?.sameAs || [],
     version: build.version,
   };
 }
 
 /**
- * ZONE C (and structured picks from A/B): apply an edit and regenerate in place.
+ * ZONE C (and structured picks from A/B): apply an owner's change.
+ *
+ * DEFAULT: edit in place (src/edit/inplace.js). The current site is patched for exactly
+ * what was asked; nothing else moves, and every earlier request is carried along as a
+ * standing request so it can't be undone by accident.
+ *
+ * REDESIGN: only when the owner explicitly asks (change.redesign, or wording like "start
+ * over" / "whole new look"). Then the site is regenerated — still honoring every standing
+ * request.
+ *
  * @param {string} previewId
- * @param {object} change  { instruction?, menuFilePath?, logoFile?, photoFiles?, setPalette?, setFonts? }
- *   logoFile/photoFiles are { path, assetPath } records written by /api/upload — the file
- *   already sits inside the preview's images/ dir, so nothing is re-downloaded.
+ * @param {object} change  { instruction?, menuFilePath(s)?, logoFile?, photoFiles?, setPalette?,
+ *                           setFonts?, setSocials?, removeRequestId?, redesign? }
  */
 export async function applyEdit(previewId, change = {}) {
+  const { editInPlace, wantsRedesign } = await import('./inplace.js');
   const build = await loadBuild(previewId);
   const facts = structuredClone(build.facts);
   const decisions = structuredClone(build.decisions || {});
+  const requests = structuredClone(build.ownerRequests || []);
   const {
     instruction = null, menuFilePath = null, menuFilePaths = null, setPalette = null, setFonts = null,
-    logoFile = null, photoFiles = [],
+    logoFile = null, photoFiles = [], setSocials = null, removeRequestId = null,
   } = change;
+  // Each typed change is its own standing request, so the owner can undo one on its own.
+  const instructions = [
+    ...(Array.isArray(change.instructions) ? change.instructions : []),
+    ...(instruction ? [instruction] : []),
+  ].map((t) => String(t || '').trim()).filter((t) => t.length > 2).slice(0, 12);
+  const redesign = change.redesign === true || wantsRedesign(instructions.join(' '));
+
+  const parts = [];          // what to do, in plain words, for the model
+  const context = {};        // data the model needs to do it truthfully
+  const newRequests = [];    // what goes onto the standing list after this edit
+
+  // 0. Undo an earlier request (the owner pressed "remove" on it in the editor).
+  if (removeRequestId) {
+    const r = requests.find((x) => x.id === removeRequestId);
+    if (r) {
+      parts.push(`UNDO this earlier change and put that part of the site back the way it was before it: "${r.text}". Change nothing else.`);
+      requests.splice(requests.indexOf(r), 1);
+    }
+  }
 
   // 1. Menu file -> knownMenu (the only sanctioned menu source).
   let menuSummary = null;
@@ -148,32 +189,30 @@ export async function applyEdit(previewId, change = {}) {
     const menu = await extractMenuFromFile(menuFilePaths?.length ? menuFilePaths : menuFilePath);
     facts.knownMenu = menu;
     menuSummary = `${menu._itemCount} items across ${(menu.sections || []).length} sections`;
+    parts.push(`Put the owner's real menu (knownMenu, ${menuSummary}) into the menu section, replacing any placeholders. Keep the section's existing design.`);
+    context.knownMenu = menu;
   }
 
-  // 1b. Uploaded LOGO -> becomes the palette anchor, and the brand is re-analyzed so the
-  //     colors are actually derived from it (the promise the suggested ask makes).
+  // 1b. Uploaded LOGO -> placed on the site. The colors it suggests are OFFERED in the
+  //     editor ("Match my logo") rather than applied — no unrequested restyle.
   let logoSummary = null;
-  let rebuiltPalette = null;
   if (logoFile?.path) {
     facts.assets = { ...facts.assets, logo: logoFile.path, logoAssetPath: logoFile.assetPath, logoUploaded: true };
     try {
       const rebrand = await analyzeBrand(facts);
-      if (rebrand?.palette) {
-        decisions.palette = rebrand.palette;
-        decisions.typography = rebrand.typography || decisions.typography;
-        rebuiltPalette = rebrand.palette;
-      }
-    } catch { /* keep existing decisions if the re-analysis fails */ }
+      if (rebrand?.palette) decisions.logoPalette = rebrand.palette;
+    } catch { /* the offer is optional */ }
     logoSummary = 'logo uploaded';
+    parts.push(`The owner uploaded their real logo at "${logoFile.assetPath}". Show it in the header and footer in place of any text/placeholder logo, sized to fit the existing header. Don't change the colors.`);
   }
 
-  // 1c. Uploaded PHOTOS -> captioned by the vision pass, then added to the ranked set so
-  //     the generator can place them by what they actually show.
+  // 1c. Uploaded PHOTOS -> captioned by the vision pass. APPENDED (not prepended) so the
+  //     existing photo-N files keep the meaning the current site already relies on.
   let photoSummary = null;
   if (photoFiles.length) {
     const added = photoFiles.map((f) => ({
-      url: null, assetPath: f.assetPath, path: f.path,
-      source: 'upload', score: 6, heroGrade: true, widthPx: f.widthPx || null,
+      url: null, assetPath: f.assetPath, path: f.path, source: 'upload', score: 6, heroGrade: true,
+      widthPx: f.widthPx || null, ...(f.note ? { ownerNote: f.note } : {}),
     }));
     try {
       const seen = await describePhotos(added.map((a) => ({ ...a, url: a.path })), {
@@ -189,37 +228,104 @@ export async function applyEdit(previewId, change = {}) {
         if (label.activity && (label.confidence ?? 1) >= 0.6) t.activity = label.activity;
       }
     } catch { /* unlabeled uploads still get used */ }
-    const ranked = facts.triage?.rankedPhotos || [];
-    facts.triage = { ...(facts.triage || {}), rankedPhotos: [...added, ...ranked] };
+    facts.triage = { ...(facts.triage || {}), rankedPhotos: [...(facts.triage?.rankedPhotos || []), ...added] };
     photoSummary = `${added.length} new photo${added.length > 1 ? 's' : ''}`;
+    context.newPhotos = added.map((a) => ({ path: a.assetPath, caption: a.caption || null, kind: a.kind || null, ownerNote: a.ownerNote || null }));
+    parts.push(`Use the ${photoSummary} the owner just uploaded (newPhotos) where their captions fit best — swap out a weaker or placeholder image rather than adding new sections, unless the request says otherwise.`);
   }
 
   // 2. Structured design picks from the palette/font choosers.
-  if (setPalette) decisions.palette = { ...decisions.palette, ...setPalette };
-  if (setFonts) decisions.typography = { ...decisions.typography, ...setFonts };
+  if (setPalette) {
+    decisions.palette = { ...decisions.palette, ...setPalette };
+    parts.push(`Change the site's colors: dominant ${setPalette.dominant}, accent ${setPalette.accent}. Update the CSS color variables/declarations only; keep contrast at WCAG AA.`);
+  }
+  if (setFonts) {
+    decisions.typography = { ...decisions.typography, ...setFonts };
+    parts.push(`Change the fonts: ${setFonts.display} for headings, ${setFonts.body} for body text. Update the Google Fonts <link> and the font-family declarations only.`);
+  }
 
-  // 3. Compose a single edit instruction for the generator (client override).
-  const parts = [];
-  if (instruction) parts.push(instruction);
-  if (setFonts) parts.push(`Use ${setFonts.display} for headings and ${setFonts.body} for body text.`);
-  if (setPalette) parts.push(`Use ${setPalette.dominant} as the dominant color and ${setPalette.accent} as the accent.`);
-  if (menuSummary) parts.push(`Replace any menu placeholders with the real knownMenu provided (${menuSummary}).`);
-  if (logoSummary)
-    parts.push(
-      `The owner uploaded their real logo — show it in the header/footer` +
-        (rebuiltPalette ? ` and rebuild the palette around it (dominant ${rebuiltPalette.dominant}, accent ${rebuiltPalette.accent}).` : '.')
-    );
-  if (photoSummary) parts.push(`Use the ${photoSummary} the owner just uploaded, placed by their captions.`);
-  const editInstruction = parts.join(' ') || 'Regenerate with the updated brand decisions.';
+  // 2b. Social profiles -> footer links + JSON-LD sameAs.
+  if (Array.isArray(setSocials)) {
+    const list = cleanSocials(setSocials);
+    facts.identity = { ...facts.identity, sameAs: list };
+    parts.push(list.length
+      ? `Update the business's social profiles to exactly these: ${list.join(', ')}. Show them as icon links (with aria-labels) where the site already shows social/contact links, or in the footer, and set the JSON-LD "sameAs" array to this list.`
+      : `Remove the social profile links and the JSON-LD "sameAs" property.`);
+  }
 
-  // 4. Regenerate and write in place (keep assets, bump version, log history).
-  const generated = await generateSite(facts, decisions, { editInstruction });
+  // 3. The owner's typed requests.
+  for (const text of instructions) {
+    parts.push(instructions.length > 1 ? `• ${text}` : text);
+    newRequests.push({ id: Math.random().toString(36).slice(2, 10), at: new Date().toISOString(), text });
+  }
+
+  if (!parts.length) throw new Error('Nothing to change.');
+  const standing = requests.map((r) => r.text);
+  const editInstruction = parts.join(' ');
+
+  let generated;
+  let summary;
+  if (redesign) {
+    // Full regenerate — only on an explicit ask. Standing requests still apply.
+    const full = standing.length
+      ? `${editInstruction}\n\nThe owner's earlier requests — these must all still be true in the new design:\n- ${standing.join('\n- ')}`
+      : editInstruction;
+    generated = await generateSite(facts, decisions, { editInstruction: full });
+    summary = 'Your site was redesigned with a fresh look. Everything you asked for earlier was kept.';
+  } else {
+    const availableImages = imagePaths(facts);
+    const r = await editInPlace(build, {
+      request: editInstruction,
+      standing,
+      context: { ...context, availableImages, socialProfiles: facts.identity?.sameAs || [] },
+    });
+    generated = r.generated;
+    summary = r.summary;
+  }
+
+  const ownerRequests = [...requests, ...newRequests.map((n) => ({ ...n, summary }))];
   const preview = await writePreview(facts, decisions, generated, {
     id: previewId,
-    // Uploaded files already live in the preview dir, so no re-fetch is needed for them.
-    skipAssets: !(menuFilePaths?.length || menuFilePath) && !logoFile && !photoFiles.length,
+    // In-place edits never re-download: uploads already sit in the preview folder and the
+    // existing photo files must not shift. A redesign keeps them too.
+    skipAssets: true,
     editInstruction,
+    extra: { ownerRequests },
   });
 
-  return { preview, editInstruction, menuSummary, logoSummary, photoSummary, palette: rebuiltPalette };
+  return { preview, editInstruction, summary, redesign, menuSummary, logoSummary, photoSummary, ownerRequests };
+}
+
+/** Every image path the site can use right now (downloaded photos, uploads, logo). */
+function imagePaths(facts) {
+  const list = (facts.triage?.rankedPhotos || facts.assets?.photos || [])
+    .map((p, i) => ({ p, i }))
+    .filter(({ p, i }) => i < 10 || p.assetPath)
+    .map(({ p, i }) => ({ path: p.assetPath || `images/photo-${i + 1}.webp`, caption: p.caption || null, activity: p.activity || null }));
+  const logo = facts.assets?.logoAssetPath || (facts.assets?.logo ? 'images/logo.png' : null);
+  if (logo) list.unshift({ path: logo, caption: 'logo' });
+  return list;
+}
+
+const SOCIAL_HOSTS = /(^|\.)(facebook\.com|fb\.com|instagram\.com|tiktok\.com|x\.com|twitter\.com|youtube\.com|linkedin\.com|yelp\.com|pinterest\.com|threads\.net|nextdoor\.com|tripadvisor\.com|google\.com|g\.page|maps\.app\.goo\.gl|untappd\.com|doordash\.com|ubereats\.com|grubhub\.com)$/i;
+
+/** Normalize owner-entered social links: https, real profile hosts only, deduped. */
+export function cleanSocials(list) {
+  const out = [];
+  for (const raw of list || []) {
+    let s = String(raw || '').trim();
+    if (!s) continue;
+    if (/^@[\w.]{2,}$/.test(s)) continue; // a bare @handle has no platform — the app sends full URLs
+    if (!/^https?:\/\//i.test(s)) s = 'https://' + s.replace(/^\/+/, '');
+    try {
+      const u = new URL(s);
+      if (!SOCIAL_HOSTS.test(u.hostname.replace(/^www\./, '').replace(/^m\./, ''))) continue;
+      u.protocol = 'https:';
+      u.hostname = u.hostname.replace(/^m\./, 'www.');
+      u.hash = '';
+      const clean = u.toString().replace(/\/$/, '');
+      if (!out.includes(clean)) out.push(clean);
+    } catch { /* not a URL */ }
+  }
+  return out.slice(0, 10);
 }
