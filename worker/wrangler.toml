@@ -16,5 +16,11 @@ bucket_name = "dksites-previews"
 pattern = "*.dksites.com/*"
 zone_id = "66df50467c15d19fa40a477cc9a65b57"
 
+# The bare domain (dksites.com) — the Builder's homepage. www.dksites.com is already
+# covered by the wildcard above; the Worker redirects it to dksites.com.
+[[routes]]
+pattern = "dksites.com/*"
+zone_id = "66df50467c15d19fa40a477cc9a65b57"
+
 # Live client domains are attached later via Cloudflare for SaaS custom hostnames,
 # which route to this same Worker. Their slug is resolved from the routes/ map in R2.

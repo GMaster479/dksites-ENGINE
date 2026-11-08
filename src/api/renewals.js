@@ -37,6 +37,15 @@ export function renewalEmail(site, daysOut) {
     ? `Your site is set to <strong>renew automatically on ${esc(when)}</strong> at ${money(year2)}. Nothing to do — it stays live.`
     : `Your hosting for <strong>${esc(domain)}</strong> is up on <strong>${esc(when)}</strong>. Renew for another year at the same ${money(year2)} you paid this year and it stays live.`;
 
+  // Connecticut's auto-renewal law: the reminder must say what renews, how often, what it
+  // costs, and how to cancel. Turning it off is one click on the dashboard, or by email.
+  const cancelNote = auto
+    ? `<p style="margin:0 0 18px;font-size:14px">Renews yearly: your site's hosting, SSL padlock and editing${site.own_domain ? '' : ', your domain'}, and the DK Sites service fee. ` +
+      `Don't want it to renew? <a href="${APP()}/?view=dashboard">Turn off auto-renew on your dashboard</a> (one click, takes effect right away) ` +
+      `or email <a href="mailto:${CONTACT()}">${esc(CONTACT())}</a>. ` +
+      `<a href="${APP()}/terms.html#renewals">Renewal terms</a>.</p>`
+    : '';
+
   const ownNote = site.own_domain
     ? `<p style="margin:0 0 18px;font-size:13px;color:#71717a">Reminder: your domain itself renews separately at your registrar — keep that paid too, or the site goes offline regardless.</p>`
     : '';
@@ -50,6 +59,7 @@ export function renewalEmail(site, daysOut) {
     heading: daysOut <= 7 ? `${daysOut} days until ${domain} renews` : `Your first year with ${domain} is almost up`,
     bodyHtml:
       `<p style="margin:0 0 18px">${renewLine}</p>` +
+      cancelNote +
       ownNote +
       (auto ? '' : `<p style="margin:0 0 26px">${button(`${APP()}/?view=dashboard`, 'Renew my site')}</p>`) +
       `<div style="border-top:1px solid #e4e4e7;padding-top:22px;margin-top:4px">` +
@@ -62,6 +72,7 @@ export function renewalEmail(site, daysOut) {
 
   const text =
     `${auto ? `Your site ${domain} renews automatically on ${when} at ${money(year2)}.` : `Your hosting for ${domain} is up on ${when}. Renew for another year at ${money(year2)}: ${APP()}/?view=dashboard`}\n\n` +
+    (auto ? `Renews yearly: hosting, SSL padlock and editing${site.own_domain ? '' : ', your domain'}, and the DK Sites service fee. To cancel, turn off auto-renew at ${APP()}/?view=dashboard or email ${CONTACT()}.\n\n` : '') +
     (site.own_domain ? 'Reminder: keep your domain paid at your registrar too.\n\n' : '') +
     `Or upgrade to a custom DK Sites build: ${money(offer.base)} minus your ${money(year2)} year-two credit = ${money(offer.price)}. Reply to this email to start.`;
 

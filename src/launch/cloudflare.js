@@ -83,12 +83,39 @@ export async function getZone(zoneId) {
   return cf(`/zones/${zoneId}`);
 }
 
-/** Turn a domain into a live, Worker-served, SSL'd site. Returns what happened. */
-export async function attachDomainToWorker(domain) {
+/**
+ * Copy records from the owner's current DNS into our zone (see dns-copy.js), so their
+ * email and other services keep working after they switch nameservers. Never proxied.
+ * Already-present records are fine (a retried connect, or an adopted zone).
+ */
+export async function importRecords(zoneId, records = []) {
+  const copied = [];
+  const failed = [];
+  for (const r of records) {
+    try {
+      await cf(`/zones/${zoneId}/dns_records`, { method: 'POST', body: r });
+      copied.push(r);
+    } catch (e) {
+      // 81057/81058: an identical record already exists. Counts as copied.
+      if (codes(e).some((c) => c === 81057 || c === 81058)) copied.push(r);
+      else failed.push({ record: r, error: e.message });
+    }
+  }
+  return { copied, failed };
+}
+
+/**
+ * Turn a domain into a live, Worker-served, SSL'd site. Returns what happened.
+ * opts.keep: records from snapshotDns() to carry over (domains the owner already uses).
+ */
+export async function attachDomainToWorker(domain, opts = {}) {
   const zone = await ensureZone(domain);
+  // Their existing records go in FIRST, before the website records, so there is never a
+  // moment where the zone exists without their email settings.
+  const kept = opts.keep?.length ? await importRecords(zone.id, opts.keep) : { copied: [], failed: [] };
   const records = [];
   for (const name of ['@', 'www']) records.push(await addProxiedRecord(zone.id, name));
   const routes = [];
   for (const p of [`${domain}/*`, `www.${domain}/*`]) routes.push(await addWorkerRoute(zone.id, p));
-  return { zone, records, routes };
+  return { zone, records, routes, kept };
 }

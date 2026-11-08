@@ -48,12 +48,26 @@ export default {
     if (host === 'app.dksites.com') {
       return fetch(`https://dksites.pages.dev${url.pathname}${url.search}`, request);
     }
-    const { slug, isApex, isPreview } = await resolveSlug(host, env);
-    // Apex/root of the preview domain: reserved for the builder app/marketing site later.
+    let { slug, isApex, isPreview } = await resolveSlug(host, env);
+    // dksites.com itself: the Builder's homepage. www always redirects to the bare domain.
+    // Which site it shows is a file in R2 (routes/dksites.com.json -> { slug }), written by
+    // `node publish-home.mjs --go-live` — so switching the homepage never needs a redeploy.
     if (isApex) {
-      return new Response('DK Sites Builder — coming soon.', {
-        status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'x-robots-tag': 'noindex' },
-      });
+      if (host.startsWith('www.')) {
+        return Response.redirect(`https://${PREVIEW_BASE}${url.pathname}${url.search}`, 301);
+      }
+      let home = null;
+      try {
+        const obj = await env.BUCKET.get(`routes/${PREVIEW_BASE}.json`);
+        if (obj) home = JSON.parse(await obj.text()).slug || null;
+      } catch {}
+      if (!home) {
+        return new Response('DK Sites Builder — coming soon.', {
+          status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'x-robots-tag': 'noindex' },
+        });
+      }
+      slug = home;
+      isPreview = false; // the real homepage: indexable, normal caching
     }
     if (!slug) return new Response('Site not found.', { status: 404 });
 

@@ -121,6 +121,29 @@ app.post('/api/lookup', async (req, res) => {
 // The facts handoff: if the request carries the facts from /api/lookup (either top-level
 // or nested under business.facts), the pipeline builds from that CONFIRMED data — no
 // re-extraction, no duplicate Places call, no resolving to the wrong business.
+// Names the Worker or DK Sites uses itself. A business can never be given these.
+const RESERVED_SLUGS = new Set(['www', 'app', 'api', 'admin', 'mail', 'email', 'send', 'smtp', 'dksites',
+  'dksites-home', 'home', 'help', 'support', 'status', 'blog', 'docs', 'static', 'assets', 'cdn', 'preview', 'test']);
+
+// Two businesses can share a name (there's more than one "Tony's Pizza"). Without this,
+// the second preview would be uploaded into the first one's folder — and if the first is
+// a PAID live site, the new preview would replace the customer's live website.
+async function uniqueSlug(base, previewId) {
+  const { getDb } = await import('./db.js');
+  const db = getDb();
+  const taken = (slug) =>
+    RESERVED_SLUGS.has(slug) ||
+    !!db.prepare('SELECT 1 FROM sites WHERE slug = ?').get(slug) ||
+    !!db.prepare('SELECT 1 FROM builds WHERE slug = ? AND preview_id != ?').get(slug, previewId);
+  if (!taken(base)) return base;
+  const tail = String(previewId).replace(/[^a-z0-9]/gi, '').toLowerCase();
+  for (const n of [4, 6, 8]) {
+    const candidate = `${base.slice(0, 40 - n - 1)}-${tail.slice(0, n)}`;
+    if (!taken(candidate)) return candidate;
+  }
+  return `${base.slice(0, 30)}-${Date.now().toString(36)}`;
+}
+
 function slugify(name, fallback) {
   const s = String(name || '')
     .toLowerCase()
@@ -194,7 +217,7 @@ app.post('/api/generate', genLimiter, async (req, res) => {
       const result = await runPipeline(bizName || description, opts);
 
       updateJob(jobId, { stage: 'Publishing your live preview…', progress: 0.85 });
-      const slug = slugify(bizName || description, result.preview.id);
+      const slug = await uniqueSlug(slugify(bizName || description, result.preview.id), result.preview.id);
       const deployed = await deployPreview(result.preview.dir, slug);
 
       updateJob(jobId, {
@@ -433,13 +456,28 @@ app.post('/api/domain/connect', async (req, res) => {
     await mapCustomDomain(domain, slug);
     await mapCustomDomain(`www.${domain}`, slug);
 
-    const cf = await attachDomainToWorker(domain);
+    // Nov 8: read their CURRENT DNS and carry email + service records into the new zone,
+    // so switching nameservers doesn't cut off their email.
+    const { snapshotDns } = await import('../launch/dns-copy.js');
+    const snap = await snapshotDns(domain);
+    const cf = await attachDomainToWorker(domain, { keep: snap.records });
+    console.log(`🔗 connect ${domain}: kept ${cf.kept.copied.length} records` +
+      (snap.email.hasEmail ? ` (email: ${snap.email.provider})` : ' (no email found)') +
+      (snap.ok ? '' : ' — WARNING: most DNS lookups failed') +
+      (cf.kept.failed.length ? ` — ${cf.kept.failed.length} could not be copied` : ''));
     const info = await detectRegistrar(`https://${domain}`);
     res.json({
       domain,
       zoneId: cf.zone.id,
       zoneStatus: cf.zone.status,
       nameservers: cf.zone.nameServers,
+      dns: {
+        ok: snap.ok && cf.kept.failed.length === 0,
+        email: snap.email,
+        copied: cf.kept.copied.length,
+        failed: cf.kept.failed.map((f) => `${f.record.type} ${f.record.name}`),
+        records: snap.summary.slice(0, 60),
+      },
       walkthrough: getWalkthrough(info.walkthroughKey, cf.zone.nameServers),
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

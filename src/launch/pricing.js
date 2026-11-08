@@ -2,7 +2,7 @@ import { config } from '../config.js';
 
 // The DK Sites pricing model:
 //   (a) domain        — passthrough at Namecheap cost
-//   (b) hosting/SSL/email/AI — flat $99/yr
+//   (b) hosting/SSL/AI editing — flat $99/yr (no email inboxes — don't advertise any)
 //   app fee           — 30% of (a + b)
 //   total             — (a + b) * 1.30   (~$147 on a typical .com)
 
@@ -23,7 +23,7 @@ export function buildQuote(domainPrice, { domain, years = 1, verified = false } 
     currency: 'usd',
     lineItems: [
       { key: 'domain', label: `Domain registration${domain ? ` — ${domain}` : ''} (${yrLabel})`, amount: domainCost },
-      { key: 'hosting', label: 'Hosting, SSL & email (1 yr)', amount: hosting },
+      { key: 'hosting', label: 'Hosting, SSL & site editing (1 yr)', amount: hosting },
       { key: 'appfee', label: `DK Sites service fee (${Math.round(config.appFeeRate * 100)}%)`, amount: appFee },
     ],
     subtotal,
