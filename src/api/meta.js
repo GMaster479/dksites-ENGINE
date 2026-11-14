@@ -30,11 +30,15 @@ import {
 //        META_TESTERS     extra emails allowed to connect before approval, comma-separated
 //        META_PUBLIC      true once Meta has approved the app
 //        META_GRAPH_VERSION (default v24.0), META_REDIRECT_URI (default api.dksites.com)
+//        META_SCOPES      permissions to ask for, comma-separated (default: the four we use)
 
 const GRAPH_VERSION = () => process.env.META_GRAPH_VERSION || 'v24.0';
 const REDIRECT_URI = () => process.env.META_REDIRECT_URI || 'https://api.dksites.com/api/meta/callback';
 const APP = () => config.appOrigin || 'https://app.dksites.com';
-const SCOPES = 'pages_show_list,pages_read_engagement,instagram_basic,business_management';
+// Which permissions to ask for. Override in .env (META_SCOPES=a,b,c) if the Meta app hasn't
+// been given one of these yet — Facebook rejects the whole sign-in over a single unknown one.
+const SCOPES = () => (process.env.META_SCOPES || 'pages_show_list,pages_read_engagement,instagram_basic,business_management')
+  .split(',').map((x) => x.trim()).filter(Boolean).join(',');
 const STATE_TTL = 15 * 60 * 1000;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9-]{7,63}$/;
 
@@ -116,7 +120,7 @@ export function loginUrl(state) {
     u.searchParams.set('config_id', process.env.META_CONFIG_ID);
     u.searchParams.set('override_default_response_type', 'true');
   } else {
-    u.searchParams.set('scope', SCOPES);
+    u.searchParams.set('scope', SCOPES());
   }
   return u.toString();
 }
