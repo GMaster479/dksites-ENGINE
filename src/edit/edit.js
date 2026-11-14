@@ -162,7 +162,14 @@ export async function applyEdit(previewId, change = {}) {
   const {
     instruction = null, menuFilePath = null, menuFilePaths = null, setPalette = null, setFonts = null,
     logoFile = null, photoFiles = [], setSocials = null, removeRequestId = null,
+    extraContext = null, mustContain = [], ownerSocial = null,
   } = change;
+  // What the business says about itself on Facebook/Instagram, kept with the build so a
+  // later redesign still has it.
+  if (ownerSocial && typeof ownerSocial === 'object') facts.ownerSocial = ownerSocial;
+  // Latest-posts feed switched on/off — remembered so a redesign keeps (or drops) it.
+  if (change.socialFeed && typeof change.socialFeed === 'object') facts.socialFeed = change.socialFeed;
+  if (change.socialFeed === false) delete facts.socialFeed;
   // Each typed change is its own standing request, so the owner can undo one on its own.
   const instructions = [
     ...(Array.isArray(change.instructions) ? change.instructions : []),
@@ -277,10 +284,20 @@ export async function applyEdit(previewId, change = {}) {
     const r = await editInPlace(build, {
       request: editInstruction,
       standing,
-      context: { ...context, availableImages, socialProfiles: facts.identity?.sameAs || [] },
+      context: { ...context, ...(extraContext || {}), availableImages, socialProfiles: facts.identity?.sameAs || [] },
     });
     generated = r.generated;
     summary = r.summary;
+  }
+
+  // Some changes only work if a specific hook ends up on the page (e.g. the social posts
+  // feed needs its placeholder and script). If the edit didn't put it there, save nothing.
+  if (mustContain?.length) {
+    const html = (generated.files || []).filter((f) => f.path.endsWith('.html')).map((f) => f.contents).join('\n');
+    const missing = mustContain.filter((needle) => !html.includes(needle));
+    if (missing.length) {
+      throw new Error('That change couldn’t be added cleanly, so nothing on your site was changed. Try it again in a moment.');
+    }
   }
 
   const ownerRequests = [...requests, ...newRequests.map((n) => ({ ...n, summary }))];

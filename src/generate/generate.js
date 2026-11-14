@@ -67,6 +67,12 @@ export async function buildGenerationPrompt(facts, decisions, opts = {}) {
     attributions: facts.attributions,
     // The ONLY sanctioned source of menu items. null => honest placeholder, never invent.
     knownMenu: facts.knownMenu || null,
+    // The business in its own words, from its own Facebook Page / Instagram (when the
+    // owner connected them). Their claims, so fine to use for voice and what they're
+    // known for — but still never invent beyond what's written here.
+    ...(facts.ownerSocial ? { ownerSocial: facts.ownerSocial } : {}),
+    // The owner turned on their latest-posts feed: a fresh design must keep its hook.
+    ...(facts.socialFeed?.on ? { socialFeed: facts.socialFeed } : {}),
   };
 
   const editBlock = editInstruction

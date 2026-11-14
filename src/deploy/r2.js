@@ -68,3 +68,27 @@ export async function mapCustomDomain(host, slug) {
   }));
   return { host, slug };
 }
+
+/**
+ * Upload just these files (paths relative to previewDir) — used by the nightly posts-feed
+ * refresh so it doesn't re-send a whole site to change one JSON file and a few photos.
+ * `remove` deletes old feed photos that are no longer shown.
+ */
+export async function deployFiles(previewDir, slug, rels = [], remove = []) {
+  const client = s3();
+  const uploaded = [];
+  for (const rel of rels) {
+    if (SKIP(rel) || rel.includes('..')) continue;
+    const Key = `clients/${slug}/${rel}`;
+    await client.send(new PutObjectCommand({
+      Bucket: config.r2Bucket, Key, Body: await readFile(join(previewDir, rel)), ContentType: typeFor(rel),
+    }));
+    uploaded.push(Key);
+  }
+  const gone = remove.filter((r) => /^images\/social\/[\w.-]+$/.test(r)).map((r) => ({ Key: `clients/${slug}/${r}` }));
+  if (gone.length) {
+    const { DeleteObjectsCommand } = await import('@aws-sdk/client-s3');
+    await client.send(new DeleteObjectsCommand({ Bucket: config.r2Bucket, Delete: { Objects: gone } }));
+  }
+  return { slug, uploaded, removed: gone.length };
+}

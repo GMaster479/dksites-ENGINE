@@ -32,6 +32,14 @@ export async function runPipeline(query, opts = {}) {
     facts = await extractBusinessFacts(query);
   }
 
+  // Their own Facebook Page / Instagram (connected in the app). Fills GAPS only — Google
+  // data wins — and adds their own words, social links and (via uploads) best photos.
+  if (opts.meta) {
+    const { enrichFacts } = await import('./extract/social-meta.js');
+    const filled = enrichFacts(facts, opts.meta);
+    if (filled.length) log(`Facebook/Instagram filled in: ${filled.join(', ')}`);
+  }
+
   // 2. TRIAGE
   // If they already have a site, read it for real CONTENT — above all the menu, which
   // public APIs never carry and which is the most valuable thing on most old sites.
@@ -54,7 +62,7 @@ export async function runPipeline(query, opts = {}) {
   // Social profiles the owner confirmed -> footer links + JSON-LD sameAs.
   if (Array.isArray(socials)) {
     const { cleanSocials } = await import('./edit/edit.js');
-    facts.identity = { ...facts.identity, sameAs: cleanSocials(socials) };
+    facts.identity = { ...facts.identity, sameAs: cleanSocials([...socials, ...(facts.identity?.sameAs || [])]) };
     if (facts.identity.sameAs.length) log(`Social profiles: ${facts.identity.sameAs.join(', ')}`);
   }
 

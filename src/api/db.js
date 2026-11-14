@@ -89,6 +89,56 @@ export function getDb() {
       key   TEXT PRIMARY KEY,
       value TEXT
     );
+
+    -- Nov 14: edits are saved jobs, so they finish (and survive a restart) even if the
+    -- owner closes the app, and the app can find a running edit when they come back.
+    CREATE TABLE IF NOT EXISTS edit_jobs (
+      id             TEXT PRIMARY KEY,
+      preview_id     TEXT NOT NULL,
+      user_id        INTEGER,
+      status         TEXT NOT NULL,      -- queued | running | done | error
+      stage          TEXT,
+      progress       REAL,
+      request_json   TEXT NOT NULL,
+      result_json    TEXT,
+      error          TEXT,
+      start_version  INTEGER,
+      attempts       INTEGER NOT NULL DEFAULT 0,
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL,
+      last_polled_at INTEGER,
+      notified_at    INTEGER,
+      notified_how   TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_edit_jobs_preview ON edit_jobs(preview_id, created_at);
+
+    -- Phones/browsers that asked to be told when an edit finishes (Web Push).
+    CREATE TABLE IF NOT EXISTS push_subs (
+      endpoint   TEXT PRIMARY KEY,
+      user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      keys_json  TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_ok_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_user ON push_subs(user_id);
+
+    -- Facebook Page / Instagram account connected to a build. Tokens are encrypted.
+    CREATE TABLE IF NOT EXISTS meta_connections (
+      preview_id    TEXT PRIMARY KEY,
+      user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      fb_user_id    TEXT,
+      pages_enc     TEXT,               -- the Pages they could pick from (encrypted, with tokens)
+      page_id       TEXT,
+      page_name     TEXT,
+      page_token_enc TEXT,
+      ig_id         TEXT,
+      ig_username   TEXT,
+      data_json     TEXT,               -- latest profile + posts we read
+      fetched_at    INTEGER,
+      feed_on       INTEGER NOT NULL DEFAULT 0,
+      feed_synced_at INTEGER,
+      created_at    INTEGER NOT NULL
+    );
   `);
   migrate(db);
   return db;

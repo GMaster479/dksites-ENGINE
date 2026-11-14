@@ -91,6 +91,9 @@ mountAccounts(app);
 (await import('./backup.js')).mountBackups(app);
 // ---- Oct 24: preview id validation, upload limit, delete preview, social lookup ----
 (await import('./builds.js')).mountBuilds(app);
+// ---- Nov 14: "your site was updated" notifications, Facebook/Instagram connection ----
+(await import('./push.js')).mountPush(app);
+(await import('./meta.js')).mountMeta(app);
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 // Rate limit the money-costing path (generation). Anonymous is fine; this just stops abuse.
@@ -214,6 +217,18 @@ app.post('/api/generate', genLimiter, async (req, res) => {
         }
       }
       if (Array.isArray(req.body?.socials)) opts.socials = req.body.socials.slice(0, 10).map(String);
+      // Nov 14: their Facebook Page / Instagram, if they connected it at the start.
+      if (opts.previewId && req.user) {
+        try {
+          const { metaInputsForBuild } = await import('./meta.js');
+          const m = await metaInputsForBuild(opts.previewId, req.user.id);
+          if (m) {
+            updateJob(jobId, { stage: 'Reading your Facebook and Instagram…', progress: 0.3 });
+            opts.meta = m.data;
+            opts.uploads = [...(opts.uploads || []), ...m.uploads].slice(0, 16);
+          }
+        } catch (e) { console.error('✗ Facebook data for build:', e.message); }
+      }
       const result = await runPipeline(bizName || description, opts);
 
       updateJob(jobId, { stage: 'Publishing your live preview…', progress: 0.85 });
@@ -237,8 +252,9 @@ app.post('/api/generate', genLimiter, async (req, res) => {
   })();
 });
 
-app.get('/api/status/:jobId', (req, res) => {
-  const job = getJob(req.params.jobId);
+app.get('/api/status/:jobId', async (req, res) => {
+  let job = getJob(req.params.jobId);
+  if (!job) job = (await import('./editjobs.js')).pollEditJob(req.params.jobId); // edits are saved jobs
   if (!job) return res.status(404).json({ error: 'unknown job' });
   res.json({ status: job.status, stage: job.stage, progress: job.progress, result: job.result, error: job.error });
 });
@@ -330,47 +346,8 @@ app.post('/api/import-image', async (req, res) => {
   } catch { res.status(422).json({ error: CANT }); }
 });
 
-app.post('/api/apply-edit', async (req, res) => {
-  const { previewId, instruction, instructions, slug, logoFile, menuFile, menuFiles, photoFiles, setPalette, setFonts, setSocials, removeRequestId, redesign } = req.body || {};
-  if (!previewId) return res.status(400).json({ error: 'previewId required' });
-
-  const jobId = createJob(); // apply-edit runs as a background job; poll /api/status/:jobId
-  res.json({ jobId });
-
-  (async () => {
-    try {
-      updateJob(jobId, { status: 'running', stage: redesign ? 'Designing a fresh version of your site…' : 'Making your change…', progress: 0.2 });
-      const { preview, editInstruction, summary, ownerRequests, redesign: wasRedesign } = await applyEdit(previewId, {
-        instruction: instruction || null,
-        logoFile: logoFile || null,
-        menuFilePath: menuFile?.path || null,
-        menuFilePaths: Array.isArray(menuFiles) ? menuFiles.map((f) => f.path).filter(Boolean) : null,
-        photoFiles: Array.isArray(photoFiles) ? photoFiles : [],
-        setPalette: setPalette || null,
-        setFonts: setFonts || null,
-        instructions: Array.isArray(instructions) ? instructions.slice(0, 12).map(String) : [],
-        setSocials: Array.isArray(setSocials) ? setSocials.slice(0, 10).map(String) : null,
-        removeRequestId: typeof removeRequestId === 'string' ? removeRequestId : null,
-        redesign: redesign === true,
-      });
-
-      let liveUrl = preview.url;
-      if (slug) {
-        updateJob(jobId, { stage: 'Publishing your updated preview…', progress: 0.85 });
-        const { join } = await import('node:path');
-        const deployed = await deployPreview(join(config.previewDir, previewId), slug);
-        liveUrl = deployed.url;
-      }
-
-      updateJob(jobId, {
-        status: 'done', stage: 'Your changes are live', progress: 1,
-        result: { version: preview.version, url: liveUrl, applied: editInstruction, summary, ownerRequests, redesign: wasRedesign },
-      });
-    } catch (e) {
-      updateJob(jobId, { status: 'error', error: e.message });
-    }
-  })();
-});
+// Nov 14: edits are saved jobs that finish on their own — see editjobs.js.
+(await import('./editjobs.js')).mountEditJobs(app);
 
 // ---- Domain availability + verified quote ----
 app.get('/api/check', async (req, res) => {

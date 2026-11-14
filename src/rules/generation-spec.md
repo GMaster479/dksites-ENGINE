@@ -61,6 +61,13 @@ be stated in the build. Leave them out. The editor asks the owner to confirm the
 confirmed fact returns as an edit instruction. Better a site that omits the founding year
 than one that invents "Est. 2010."
 
+**D. The owner's own words — `ownerSocial`.** When present, this is what the business itself
+wrote on its own Facebook Page and Instagram (about text, bio, recent post captions). It
+counts as the owner's own claims: use it for the site's voice and for what they're known for
+(a "family-owned since 1998" in their own About text may be stated). Do NOT turn post
+captions into menu items or prices — menu items still come only from `knownMenu`. Specials,
+events and dates in old posts are time-sensitive: don't present them as current.
+
 Honest placeholders are a feature: they signal "I have your real info and left an obvious
 spot for the details only you can give me." General true atmosphere copy ("rotating taps,"
 "made to order") is fine when supported by the input.
